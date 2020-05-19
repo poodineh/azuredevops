@@ -1,0 +1,35 @@
+{
+    "count": 1,
+    "value": [
+        {
+            "variables": {
+                "UserId": {
+                    "value": null,
+                    "isSecret": true
+                },
+                "SecretKey": {
+                    "value": null,
+                    "isSecret": true
+                }
+            },
+            "id": 77,
+            "type": "Vsts",
+            "name": "PipelineVariables",
+            "description": "Pipeline Variables used across templates which includes secret keys",
+            "createdBy": {
+                "displayName": "Dondee Tan",
+                "id": "33344112-bd6f-495e-9432-aaed8257f399",
+                "uniqueName": "Dondee.Tan@somedomain.com"
+            },
+            "createdOn": "2019-10-09T15:13:03.17Z",
+            "modifiedBy": {
+                "displayName": "Don Tan",
+                "id": "33344112-bd6f-495e-9432-aaed8257f399",
+                "uniqueName": "Dondee.Tan@somedomain.com"
+            },
+            "modifiedOn": "2019-10-09T20:42:11.06Z",
+            "isShared": false,
+            "variableGroupProjectReferences": null
+        }
+    ]
+}

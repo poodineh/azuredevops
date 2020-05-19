@@ -1,0 +1,25 @@
+{
+    "count": 2,
+    "value": [
+        {
+            "id": "f4dc9323-f761-4c6d-b9e3-40a0b66dde41",
+            "name": "Project1",
+            "description": "Mock Data Project 1",
+            "url": "https://dev.azure.com/dondeetan/_apis/projects/f4dc9323-f761-4c6d-b9e3-40a0b66dde41",
+            "state": "wellFormed",
+            "revision": 63771905,
+            "visibility": "private",
+            "lastUpdateTime": "2019-09-05T19:33:30.71Z"
+        },
+        {
+            "id": "0342841d-b0d8-442a-a2fe-cd82127a1937",
+            "name": "Project2",
+            "description": "Mock Data Project 2",
+            "url": "https://dev.azure.com/dondeetan/_apis/projects/0342841d-b0d8-442a-a2fe-cd82127a1937",
+            "state": "wellFormed",
+            "revision": 63768931,
+            "visibility": "private",
+            "lastUpdateTime": "2019-03-25T17:53:31.857Z"
+        }
+    ]
+}

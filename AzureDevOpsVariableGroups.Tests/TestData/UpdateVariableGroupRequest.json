@@ -1,0 +1,15 @@
+{
+  "variables": {
+    "UserId": {
+      "value": "value1",
+      "isSecret": true
+    },
+    "SecretKey": {
+      "value": "updatedvalue2",
+      "isSecret": false
+    }
+  },
+  "type": "Vsts",
+  "name": "PipelineVariables",
+  "description": "Pipeline Variables used across templates which includes secret keys"
+}

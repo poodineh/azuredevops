@@ -1,0 +1,30 @@
+{
+    "count": 5,
+    "value": [
+        {
+            "type": "variablegroup",
+            "id": "27",
+            "authorized": true
+        },
+        {
+            "type": "variablegroup",
+            "id": "29",
+            "authorized": true
+        },
+        {
+            "type": "variablegroup",
+            "id": "33",
+            "authorized": true
+        },
+        {
+            "type": "variablegroup",
+            "id": "37",
+            "authorized": true
+        },
+        {
+            "type": "variablegroup",
+            "id": "77",
+            "authorized": true
+        }
+    ]
+}

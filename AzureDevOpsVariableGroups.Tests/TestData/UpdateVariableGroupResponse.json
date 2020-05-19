@@ -1,0 +1,36 @@
+{
+  "variables": {
+      "UserId": {
+          "value": null,
+          "isSecret": true
+      },
+      "SecretKey": {
+          "value": "updatedvalue2"
+      }
+  },
+  "id": 77,
+  "type": "Vsts",
+  "name": "PipelineVariables",
+  "description": "Pipeline Variables used across templates which includes secret keys",
+  "createdBy": {
+      "displayName": null,
+      "id": "33344112-bd6f-495e-9432-aaed8257f399"
+  },
+  "createdOn": "2019-10-09T15:13:03.17Z",
+  "modifiedBy": {
+      "displayName": null,
+      "id": "33344112-bd6f-495e-9432-aaed8257f399"
+  },
+  "modifiedOn": "2019-10-09T20:40:13.3866667Z",
+  "isShared": false,
+  "variableGroupProjectReferences": [
+      {
+          "projectReference": {
+            "id": "f4dc9323-f761-4c6d-b9e3-40a0b66dde41",
+            "name": "Project1"
+          },
+          "name": "PipelineVariables",
+          "description": "Pipeline Variables used across templates which includes secret keys"
+      }
+  ]
+}

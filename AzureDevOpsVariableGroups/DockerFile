@@ -1,0 +1,31 @@
+# This instruction initializes a new build stage and sets the Base Image for the remaining 
+FROM mcr.microsoft.com/dotnet/core/sdk:3.0 AS build-env
+# sets the working directory for any remaining RUN, CMD, ENTRYPOINT, COPY, and ADD Dockerfile instructions. If the directory doesn't exist, it's created. In this case, WORKDIR is set to the app directory.
+WORKDIR /app
+
+# Copy csproj and restore as distinct layers. Instruction copies new files or directories from the source path and adds them to the destination container filesystem
+COPY *.csproj ./
+RUN dotnet restore
+
+# Copy everything else and build. This COPY instruction copies the rest of the files into our container into new layers.
+COPY . ./
+# ommand compiles the application, reads through its dependencies specified in the project file, and publishes the resulting set of files to a directory. Our app is published with a Release configuration and output to the default directory.
+RUN dotnet publish -c Release -o out
+
+# Build runtime image
+FROM mcr.microsoft.com/dotnet/core/runtime:3.0-alpine
+WORKDIR /app
+### Do not run as root user
+## For Alpine Builds
+RUN addgroup -S app && adduser -S -G app app
+USER app
+
+## For Non Alpine Builds
+# RUN chown -R www-data:www-data /app
+# USER www-data
+COPY --from=build-env /app/out .
+### List all files now in this directory
+RUN ls -la
+
+#Run the app from the base image layer
+ENTRYPOINT ["dotnet", "AzureDevOpsVariableGroups.dll"]
