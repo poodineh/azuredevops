@@ -1,0 +1,224 @@
+### Azure Python Function Release: Build, Test + Integration Test, Resource and Azure Function Deployment Template ###
+
+# This template is used for deploying (releasing) Azure Python Functions using YAML. The same template can be used for all environments. Using the artifacts, this template deploys the azure resources to the environment and starts the app service. It then deploys the azure function and if requested, runs integration tests (this is usually in QA only). Use this in CICD pipeline. It takes the following input parameters:
+
+#   EnvironmentName: name of environment
+#   AgentPoolName: Windows Agent pool name 
+#   LinuxAgentPoolName: Linux Agent pool name 
+#   BuildConfiguration: build or release
+#   DeploymentType: type of deployment - e.g. functionAppLinux. If we were deploying multiple things, we could pass in different values and apply logic to this value in the future.
+#   functionAppName: name of function app - e.g. 'flight-aagops'
+#   functionAppFullName: name of function app including environment and location - e.g. 'flight-aagops-qa-func-westus2'
+#   ArmTemplateName: name of arm template json file
+#   ArmTemplateParameterName: name of arm template config json file
+#   azureSubscription: name of subscription - e.g. 'flight-qa-group-SPN'
+#   resourceGroupName: name of resource group - e.g. 'flight-qa-group'
+#   location: Azure location to deploy to - e.g. West US 2
+#   boolRunIntegrationTests: true or false - run integration tests - usually QA only
+#   appFolderPath: application files subfolder path (from root of repo). This value should end in /
+#   resourceFolderPath: resource scripts subfolder path (from root of repo). Assumes this folder has a Templates
+# 				subfolder containing arm templates and could contain an optional Scripts subfolder. 
+# 				This value should end in /
+
+###
+###  ASSUMPTIONS:
+###   parameters.resourceFolderPath contains arm templates 
+###   folderpaths end in /
+###
+
+parameters:
+  ### Deployment Parameters
+  EnvironmentName: ''
+  AgentPoolName: ''
+  LinuxAgentPoolName: ''
+  BuildConfiguration: ''
+  DeploymentType: ''
+  functionAppName: ''
+  functionAppFullName: ''
+  ArmTemplateName: ''
+  ArmTemplateParameterName: ''
+  azureSubscription: ''
+  resourceGroupName: ''
+  location: ''
+  boolRunIntegrationTests: ''
+  # ### Folder update parameters
+  appFolderPath: ''
+  resourceFolderPath: ''
+
+jobs:
+  # Prep job
+  - job: Prep
+    pool:
+      name: ${{ parameters.AgentPoolName }}  # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+    displayName: 'Get-Set Update Folder Parameters'
+    # dependsOn: CherwellChangeRequest -- only add in if prod and when working!
+    steps:
+    # Print Params
+    - powershell: |  
+        Write-Host "Build Parameters:"
+        Write-Host "EnvironmentName - ${{ parameters.EnvironmentName}}"
+        Write-Host "AgentPoolName - ${{ parameters.AgentPoolName}}"
+        Write-Host "LinuxAgentPoolName - ${{ parameters.LinuxAgentPoolName}}"
+        Write-Host "BuildConfiguration - ${{ parameters.BuildConfiguration}}"
+        Write-Host "DeploymentType - ${{ parameters.DeploymentType}}"
+        Write-Host "functionAppName - ${{ parameters.functionAppName }}"
+        Write-Host "functionAppFullName - ${{ parameters.functionAppFullName }}"
+        Write-Host "ArmTemplateName - ${{ parameters.ArmTemplateName}}"
+        Write-Host "ArmTemplateParameterName - ${{ parameters.ArmTemplateParameterName}}"
+        Write-Host "azureSubscription - ${{ parameters.azureSubscription}}"
+        Write-Host "resourceGroupName - ${{ parameters.resourceGroupName}}"
+        Write-Host "location - ${{ parameters.location}}"
+        Write-Host "boolRunIntegrationTests - ${{ parameters.boolRunIntegrationTests}}"
+        Write-Host "appFolderPath - ${{ parameters.appFolderPath}}"
+        Write-Host "resourceFolderPath - ${{ parameters.resourceFolderPath}}"
+      displayName: 'Print BuildAndPublish Parameters'
+    
+    # get/set update variables
+    - powershell: |
+        $editedFiles = git diff head remotes/origin/* --name-only
+        $editedFiles | ForEach-Object {
+          # echo $_
+          if ($_ -like "*.yml")
+          {
+            echo 'yml'
+            echo "##vso[task.setvariable variable=boolAppCodeUpdated;isOutput=true]true" 
+            echo "##vso[task.setvariable variable=boolResourceCodeUpdated;isOutput=true]true" 
+          }
+          if ($_ -like '${{ parameters.appFolderPath}}*')
+          {
+            echo 'boolAppCodeUpdated'
+            echo "##vso[task.setvariable variable=boolAppCodeUpdated]true"
+          }
+          else
+          {
+            echo "##vso[task.setvariable variable=boolAppCodeUpdated]false"
+          }
+          if ($_ -like '${{ parameters.resourceFolderPath}}*')
+          {
+            echo 'boolResourceCodeUpdated'
+            echo "##vso[task.setvariable variable=boolResourceCodeUpdated]true"
+          }
+          else
+          {
+            echo "##vso[task.setvariable variable=boolResourceCodeUpdated]false"
+          }
+        }
+      displayName: 'Get updated file/folder variables'
+      name: updateVariable
+    # test output
+    - powershell: |
+        echo "$(updateVariable.boolAppCodeUpdated)"
+        echo "$(updateVariable.boolResourceCodeUpdated)"
+      displayName: 'Testing - Output variables'
+
+  # Deploy resources job
+  - deployment: ResourceDeploymentTo${{ parameters.EnvironmentName }} 
+    dependsOn: Prep
+    variables:
+      BuildConfiguration: '${{ parameters.BuildConfiguration }}'
+    pool:
+        name: ${{ parameters.AgentPoolName }}  # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+    displayName: Azure App Service Resource Deployment
+    environment:  ${{ parameters.EnvironmentName }} 
+    # only deploy if resources changed
+    condition: eq(dependencies.Prep.outputs['updateVariable.boolResourceCodeUpdated'],'true') 
+        
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          # Show pipeline artifact folders
+          - script: dir $(Pipeline.Workspace)
+            displayName: 'Shows all pipeline artifacts'
+
+      # causing issue due to MSFT change? blocking so commenting out for now.
+          # Create Azure Resources
+          - task: AzureResourceGroupDeployment@2
+            displayName: 'Provision Azure Resources in ${{ parameters.resourceGroupName }}'
+            inputs:
+              azureSubscription: '${{ parameters.azureSubscription }}'
+              action: 'Create Or Update Resource Group'
+              resourceGroupName: '${{ parameters.resourceGroupName }}'
+              location: '${{ parameters.location }}'
+              csmFile: '$(Pipeline.Workspace)/resources/${{ parameters.ArmTemplateName }}'
+              csmParametersFile: '$(Pipeline.Workspace)/resources/${{ parameters.ArmTemplateParameterName }}'
+
+          # Start the app services
+          - task: AzureAppServiceManage@0
+            inputs:
+              azureSubscription: '${{ parameters.azureSubscription }}'
+              Action: 'Start Azure App Service'
+              WebAppName:  '${{ parameters.functionAppFullName }}'
+
+
+  # Deploy application job
+  # Need separate deployment step because this uses a different agent (linux)
+  - deployment: FunctionAppDeploymentTo${{ parameters.EnvironmentName }} 
+    pool:
+        name: ${{ parameters.LinuxAgentPoolName }}  # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+    variables:
+      BuildConfiguration: '${{ parameters.BuildConfiguration }}'
+    displayName: Azure Application Deployment
+    environment:  ${{ parameters.EnvironmentName }} 
+    dependsOn: 
+    - Prep
+    - ResourceDeploymentTo${{ parameters.EnvironmentName }} 
+    condition: in(dependencies.ResourceDeploymentTo${{ parameters.EnvironmentName }}.result, 'Succeeded', 'Skipped')
+    # can't get these conditions to work like I want below - each works separately, but not together
+    # condition: |
+    #   and
+    #   (
+    #     in(dependencies.ResourceDeploymentTo${{ parameters.EnvironmentName }}.result, 'Succeeded', 'Skipped'),
+    #     eq(dependencies.Prep.outputs['updateVariable.boolAppCodeUpdated'],'true')
+    #   )
+    
+    strategy:
+      runOnce:
+        deploy:
+        # dependsOn: Prep
+        # condition: eq(dependencies.Prep.outputs['updateVariable.boolAppCodeUpdated'],'true')
+
+          steps:
+          # # dependsOn: Prep
+          # # condition: eq(dependencies.Prep.outputs['updateVariable.boolAppCodeUpdated'],'true')
+          # # - ${{ if eq($(boolAppCodeUpdated), 'true') }}:
+          #   - script: echo 'boolAppCodeUpdated = true'
+       
+          # Show pipeline artifact folders
+          - script: ls $(Pipeline.Workspace)
+            displayName: 'Shows all pipeline artifacts'
+          
+          # Deploy the application with function(s)
+          - task: AzureFunctionApp@1
+            displayName: 'Deploy Azure Function App'
+            inputs:
+              azureSubscription: '${{ parameters.azureSubscription }}'
+              resourceGroupName: '${{ parameters.resourceGroupName }}'
+              ### Web application Azure App Service Type
+              ${{ if eq(parameters.DeploymentType, 'WebAppService') }}:
+                appType: webApp
+              ${{ if eq(parameters.DeploymentType, 'FunctionAppService') }}:
+                appType: functionApp
+              ${{ if eq(parameters.DeploymentType, 'functionAppLinux') }}:
+                appType: functionAppLinux
+              ${{ if eq(parameters.DeploymentType, 'ContainerAppService') }}:
+                appType: webAppContainer
+              appName: '${{ parameters.functionAppFullName }}'
+              package: '$(Pipeline.Workspace)/drop/${{ parameters.functionAppName}}.zip'
+
+            ## Run only if running unit tests
+          - ${{ if eq(parameters.boolRunIntegrationTests, 'true') }}:
+            - task: UsePythonVersion@0
+              displayName: "Use python version to 3.6 as required by functions"
+              inputs:
+                versionSpec: '3.6'
+                architecture: 'x64'
+          
+            - script: |
+                cd  $(Pipeline.Workspace)/${{ parameters.functionAppName}}-integration-test
+                python3.6 -m venv worker_venv
+                source worker_venv/bin/activate
+                pip3.6 install setuptools
+                pip3.6 install -r requirements.txt
+                python -m unittest discover -v tests -p "*_test.py"
+              displayName: "Run Integration Tests"

@@ -1,0 +1,159 @@
+#Type: Job Yaml Template
+#Summary: 
+#   1. Restores, Builds, and Publishes the Project Artifact
+#   2. Execute SonarQube Security Scan & Unit Tests.  Results are published to SonarQube
+#   3. If successful, publish all artifacts including PrepForBuild resources
+#   4. PrepForBuild can be performed inside the same stage or in a separate preceding stage by using the ContainsPrepForBuildJob parameter
+#       1. If inside the same stage, leave ContainsPrepForBuildJob empty. The name must be PrepForBuild
+#       2. If in a separate preceding stage, set ContainsPrepForBuildJob to false
+#   5. Unit Tests
+#       1. Unit Test coverage can be reported on both windows and linux agents.  
+#       2. If linux, you must install coverlet.msbuild to your test project and set the UseCoverlet parameter to true.
+#   6. Template references
+#       1. Yaml/Builds/Security/SonarQubeScanNetCore.yml
+#       2. Yaml/Builds/NetCore/DotNetCoreBuildAndPublish.yml
+#       3. Yaml/Builds/NetCore/DotNetCoreQualitySteps.yml
+
+parameters:
+  #Agent Pools parameters
+  #Choose AgentPoolName to use custom self-hosted agent pools or AgentVmImage to use the hosted agents
+  AgentPoolName: 'Azure Pipelines' 
+  AgentVmImage: '' #Valid Values: https://docs.microsoft.com/en-us/azure/devops/pipelines/agents/hosted?view=azure-devops 
+ 
+  #Application Build parameters  
+  ApplicationName: ''
+  BuildConfiguration: ''
+  SonarScanSolutionFile: ''
+  ProjectFileLocation: ''  
+  NetCoreSDKVersion: ''
+  PathToNugetConfig: ''
+  SelfContained: ''
+
+  #Pipeline parameters
+  ContainsPrepForBuildJob: '' # false -- if PrepForBuild is NOT in the same stage as the App Build in the same stage
+
+  #Unit Test parameters
+  TestProjectFileLocation: ''
+  RunSettingsFileLocation: ''
+  TestCategories: ''
+  UseCoverlet: '' #Set to true to capture code coverage on linux agents using coverlet.msbuild.Requires Coverlet to be installed in the test projects -- https://www.nuget.org/packages/coverlet.msbuild/
+  CustomTestArguments: '' #This allows callers to pass custom test arguments and can override any pre-configured test tasks
+  
+  # SonarQube parameters - Not Triggered unless both have values
+  ProjectKey: '' # Required
+  ProjectName: '' # Required
+  ExtraProperties: '' # Optional
+
+jobs: 
+- job: ${{ parameters.ApplicationName }}QualityAndSecurityBuild
+  ### Uses PrepForBuild Job from downstream pipeline. This dependency is for teams to make changes in their directory structure 
+  ### E.g. Config transforms, seed data, etc...
+  ### In SonarQube. We don't use Prep Directories. This is to ensure we're scanning all base files without transformations
+  ${{ if ne(parameters.ContainsPrepForBuildJob, 'false') }}:
+    dependsOn: 'PrepForBuild'
+    condition: succeeded('PrepForBuild')
+  pool:
+      name: ${{ parameters.AgentPoolName }} # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+      vmImage: ${{ parameters.AgentVmImage }}
+  workspace:
+    clean: all
+  steps:
+  ##1. Part 1: Download and print all artifacts
+  - download: DevOps   # downloads all artifacts from `mypipe`
+    displayName: 'Downloading Shared Arfiacts from DevOps Pipeline'
+
+  - download: current  # must include this, since by including a download step, we don't get automatic behavior anymore
+    artifact: Prepped  # anything that you publish prior to this job
+    displayName: 'Downloading Current Prepped Artifacts' 
+    
+   ### Shows all pipeline artifacts
+   ### Changing from script to powershell to match below
+  - powershell: ls $(Pipeline.Workspace)
+    displayName: 'Shows all pipeline artifacts'
+  
+  ##2. Part 2: Build the Application, Run the Unit Tests, and Publish the SonarScan Results
+  - template:  ../Security/SonarQubeScanNetCore.yml  # Template reference
+    parameters:
+      # Application Build Process   
+      ApplicationName: ${{ parameters.ApplicationName }}
+      AgentPoolName: ${{ parameters.AgentPoolName }}
+      AgentVmImage: ${{ parameters.AgentVmImage }}
+      BuildConfiguration: ${{ parameters.BuildConfiguration }}
+      SonarScanSolutionFile: ${{ parameters.SonarScanSolutionFile }}
+      # We use Prepped folder to build and publish our application because of prepped changes such as configs and/or environment specific changes
+      ProjectFile: $(Pipeline.Workspace)/Prepped/${{ parameters.ProjectFileLocation }}
+      NetCoreSDKVersion: ${{ parameters.NetCoreSDKVersion }}
+      PathToNugetConfig: ${{ parameters.PathToNugetConfig }}
+      SelfContained: ${{ parameters.SelfContained }}
+      
+      # We DON'T use prepped for the test project because the intention is to run unit tests on the root source directory where SonarQube uses for analysis and code coverage
+      # Unit Tests
+      TestProjectFileLocation:  ${{ parameters.TestProjectFileLocation }}
+      # The .runsettings file can be configured so that it's either download from a different build artifact (devops pipeline) or provide as parameter
+      ${{ if eq(parameters.RunSettingsFileLocation, '') }}:
+        RunSettingsFileLocation: '$(Pipeline.Workspace)/DevOps/SharedArtifacts/CodeCoverage.runsettings'
+      ${{ if ne(parameters.RunSettingsFileLocation, '') }}:
+        RunSettingsFileLocation: ' $(Pipeline.Workspace)/Prepped/${{ parameters.RunSettingsFileLocation }}'
+      TestCategories: ${{ parameters.TestCategories }}
+      UseCoverlet: '${{ parameters.UseCoverlet }}'
+      CustomTestArguments: '${{ parameters.CustomTestArguments }}'
+      
+      # SonarQube - Not Triggered unless both have values
+      ProjectKey: ${{ parameters.ProjectKey }}
+      ProjectName: ${{ parameters.ProjectName }}
+
+      ${{ if ne(parameters.UseCoverlet, '') }}: #Supplies the Default path for OpenCover which is used for Code Coverage
+        ExtraProperties: 'sonar.cs.opencover.reportsPaths=$(Build.SourcesDirectory)/**/coverage.opencover.xml'
+      ${{ if eq(parameters.UseCoverlet, '') }}:
+        ExtraProperties: ' ${{ parameters.ExtraProperties }}'
+
+  #Publish Artifacts
+  - powershell: | 
+      Write-Host "Agent OS: $(Agent.OS)"
+      Write-Host "Agent MachineName: $(Agent.MachineName)"
+      Write-Host "Agent Name: $(Agent.Name)"
+    displayName: 'Show Agent Information'
+  
+  ### This is specific fix to Linux build agents. Linux is case sensitive on both folder names and path structure  
+  ### The main idea is to rename it temporarily to something else:
+  ### Get-Item Deployment | Rename-Item -NewName tempdeployment| Rename-Item -NewName deployment
+  - powershell: |
+      # Change folder path: 
+      $folderpreppedpath = "$(Pipeline.Workspace)/Prepped" -replace "\\","/"
+      # Step 1: Rename to tempname to all lower case
+      Get-ChildItem $folderpreppedpath |  Where-Object {$_.PSIsContainer} | % { $tempname = ("temp"+$_.Name.ToLower()); Rename-Item $_ -NewName $tempname } 
+      # Step 2: remove the characters 'temp'
+      Get-ChildItem $folderpreppedpath |  Where-Object {$_.PSIsContainer} | % { Rename-Item $_ -NewName $_.Name.tostring().Substring(4)}
+    displayName: 'Linux - Check and Rename deployment folder'    
+    condition: eq( variables['Agent.OS'], 'Linux' )
+
+  # Shows all pipeline artifacts
+  - powershell: ls $(Pipeline.Workspace)/Prepped
+    displayName: 'Shows all Prepped Pipeline Artifacts'
+    
+  # New YAML Schema
+  # https://github.com/microsoft/azure-pipelines-yaml/blob/master/design/pipeline-artifacts.md  
+  - upload: $(Pipeline.Workspace)/Prepped/deployment
+    displayName: 'Uploading Deployment Artifacts'  
+    artifact: DeploymentResources
+ 
+  ### Commenting Entire Section. App Ingestion to track application technology usage will be disabled for now. 
+  ### DevSecOps will re-evaluate with EA team whether it's still needed or not. 
+  # # If .Net Core Version is installed or passed as a parameter (2.2, 2.1 or earlier versions, just re-install 3.1 SDK. 
+  # # This is the last step of the job, hence re-install 3.1.x is the better solution
+  # - ${{ if ne(parameters.NetCoreSDKVersion, '') }}:
+  #   - task: UseDotNet@2
+  #     displayName: 'Re-Install .Net Core SDK Version 3.1.x For App Ingestion'
+  #     inputs:
+  #       packageType: 'sdk'
+  #       version:  '3.1.x'
+  #       includePreviewVersions: false  
+
+  # - template:  ../Common/AppIngestion.yml
+  #   parameters:
+  #     ProjectFile: $(Pipeline.Workspace)/Prepped/${{ parameters.ProjectFileLocation }}
+  #     Technology: '.Net Core'
+  #     Language: 'c#'
+  #     ApplicationName: ${{ parameters.ApplicationName }}
+    
+ 

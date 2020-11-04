@@ -1,0 +1,102 @@
+### Shared YAML Template for both Publish and Application Info Gathering
+### Any failures should in this template should cause the build to fail
+### Error conditions will be logged silently
+parameters:
+  ProjectFile: '' 
+  Technology: ''
+  Language: ''
+  ApplicationName: ''
+
+steps:
+#Print Publish Parameters
+- powershell: |  
+    Write-Host "Publish Parameters:"
+    Write-Host "ProjectFile - ${{ parameters.ProjectFile}}"
+    Write-Host "Technology - ${{ parameters.Technology}}"
+    Write-Host "Language - ${{ parameters.Language}}"
+    Write-Host "ApplicationName - ${{ parameters.ApplicationName}}"
+  displayName: 'AIQ-Print App Ingestion Parameters'
+
+#Check Enterprise Parameters
+- powershell: |  
+    Write-Host "Check Enterprise Parameters:"
+    Write-Host "App Ingestion application missing required variables.  Verify your yaml is using required variable: - group: PipelineVariables"
+  displayName: 'AIQ-Check App Ingestion Enterprise Parameters'
+  condition: or(eq('$(AppIngestionUrl)', ''), eq('$(AppIngestionKey)', ''))
+
+### obsolescence work 
+# Shows all pipeline artifacts
+- powershell: ls $(Pipeline.Workspace)/DevOps/SharedArtifacts
+  displayName: 'AIQ-Shows all DevOps SharedArtifacts Pipeline Artifacts'
+
+- task: ExtractFiles@1
+  inputs:
+    archiveFilePatterns: '$(Pipeline.Workspace)/DevOps/SharedArtifacts/*.zip'
+    destinationFolder: '$(Agent.TempDirectory)/appingestion'
+    cleanDestinationFolder: true
+  displayName: 'AIQ-Extracting App Ingestion Files to Agent Temp Directory'
+
+- powershell: |
+    # Set docker tag from build definition name: $(Date:yyyyMMdd)$(Rev:.r)
+    $buildnamesplit = $env:buildname.Split("_")
+    $dateandrevid = $buildnamesplit[2]
+    Write-Host "##vso[task.setvariable variable=DateAndRev]$dateandrevid"
+  displayName: 'AIQ-Powershell: Set Environment Variables for Docker Tag and Branch Repo Name'
+  env:
+    buildname: '$(Build.BuildNumber)' # The name of the completed build which is defined above the YAML file
+
+- ${{ if eq(parameters.Technology, '.Net Core') }}:    
+  - task: PowerShell@2
+    inputs:
+      targetType: 'inline'
+      errorActionPreference: 'silentlyContinue'
+      script: |
+        $Path = "${{ parameters.ProjectFile }}"
+        $XPath = "//TargetFramework"
+        $frameworkversion = Select-Xml -Path $Path -XPath $Xpath | Select-Object -ExpandProperty Node |  Select-Object -Expand '#text'
+        Write-Host "##vso[task.setvariable variable=FrameworkVersion]$frameworkversion"
+    displayName: 'AIQ-Powershell: Get Framework Version From Application'
+
+- ${{ if eq(parameters.Technology, '.Net Framework') }}:
+  - task: PowerShell@2
+    inputs:
+      targetType: 'inline'
+      errorActionPreference: 'silentlyContinue'
+      script: |
+        $Path = "${{ parameters.ProjectFile }}"
+        $XPath = "//msb:TargetFrameworkVersion"
+        $frameworkversion = Select-Xml -Namespace @{msb="http://schemas.microsoft.com/developer/msbuild/2003"} -Path $Path -XPath $Xpath | Select-Object -ExpandProperty Node |  Select-Object -Expand '#text'
+        Write-Host "##vso[task.setvariable variable=FrameworkVersion]$frameworkversion"
+    displayName: 'AIQ-Powershell: Get Framework Version From Application'
+
+- ${{ if eq(parameters.Technology, 'Node') }}:    
+  - task: PowerShell@2
+    inputs:
+      targetType: 'inline'
+      errorActionPreference: 'silentlyContinue'
+      script: |
+        $packagejsonfile  = "${{ parameters.ProjectFile }}/package.json"
+        $convertfromjson = Get-Content $packagejsonfile | ConvertFrom-Json
+        $frameworkversion = $convertfromjson.devDependencies."@types/node"
+        Write-Host "##vso[task.setvariable variable=FrameworkVersion]$frameworkversion"
+    displayName: 'AIQ-Powershell: Get Framework Version From Application'
+    
+- task: PowerShell@2
+  condition: and(succeeded(), ne('$(AppIngestionUrl)', ''), ne('$(AppIngestionKey)', ''))
+  inputs:
+    targetType: 'inline'
+    errorActionPreference: 'silentlyContinue'
+    script: |
+      Write-Host ".\AzureCosmosAppDataIngestion.exe -u '$(AppIngestionUrl)' -k '$(AppIngestionKey)' -i '${{ parameters.ApplicationName }}$(DateAndRev)' -n '${{ parameters.ApplicationName }}' -t '${{ parameters.Technology }}' -f '$(FrameworkVersion)' -l '${{ parameters.Language }}'"
+      workingDirectory: '$(Agent.TempDirectory)/appingestion'
+  displayName: 'AIQ-Powershell: Display App Ingestion Arguments'
+
+- task: PowerShell@2
+  condition: and(succeeded(), ne('$(AppIngestionUrl)', ''), ne('$(AppIngestionKey)', ''))
+  inputs:
+    targetType: 'inline'
+    errorActionPreference: 'silentlyContinue'
+    script: |
+      .\AzureCosmosAppDataIngestion.exe -u '$(AppIngestionUrl)' -k '$(AppIngestionKey)' -i '${{ parameters.ApplicationName }}$(DateAndRev)' -n '${{ parameters.ApplicationName }}' -t '${{ parameters.Technology }}' -f '$(FrameworkVersion)' -l '${{ parameters.Language }}'
+    workingDirectory: '$(Agent.TempDirectory)/appingestion'
+  displayName: 'AIQ-Insert Application Information to EA CMDB'

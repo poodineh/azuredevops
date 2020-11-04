@@ -1,0 +1,94 @@
+### Azure Python Function Build, Test and Artifact Deployment Template ###
+
+# This template is used for building Azure Python Functions using YAML. This template builds the azure function, runs unit tests, and, if requested, publishes the build artifacts. Use this in both PullRequest (to verify successful build before merging) and in CICD pipeline. It takes the following input parameters:
+
+#   AgentPoolName: Windows Agent pool name
+#   BuildConfiguration: build or release
+#   appFolderPath: application files subfolder path (from root of repo)
+#   resourceFolderPath: resource scripts subfolder path (from root of repo)
+#   functionAppName: name of function app - e.g. flight-aagops
+#   boolPublishArtifacts: true or false - publish artifacts to be deployed, set to false if used in a pull request, set to true if used in a CD (Continuous Delivery) pipeline
+#   pythonVersion: version of python to use - default to latest tested version
+
+parameters:
+  # Python Application Build Process
+  AgentPoolName: ''
+  BuildConfiguration: ''
+  appFolderPath: ''
+  resourceFolderPath: ''
+  functionAppName: ''
+  boolPublishArtifacts: ''
+  pythonVersion: '3.6'
+
+jobs:
+- job: BuildTestAndPublishArtifacts
+  pool:
+    name: ${{ parameters.AgentPoolName }} # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+  variables:
+    BuildConfiguration: ${{ parameters.BuildConfiguration}}"
+
+  steps:
+
+  - powershell: |
+      Write-Host "Build Parameters:"
+      Write-Host "AgentPoolName - ${{ parameters.AgentPoolName}}"
+      Write-Host "BuildConfiguration - ${{ parameters.BuildConfiguration}}"
+      Write-Host "appFolderPath - ${{ parameters.appFolderPath}}"
+      Write-Host "resourceFolderPath - ${{ parameters.resourceFolderPath}}"
+      Write-Host "functionAppName - ${{ parameters.functionAppName}}"
+      Write-Host "boolPublishArtifacts - ${{ parameters.boolPublishArtifacts}}"
+    displayName: 'Print BuildAndPublish Parameters'
+
+  # Use python
+  - task: UsePythonVersion@0
+    displayName: 'Use Python ${{ parameters.pythonVersion }}'
+    inputs:
+      versionSpec: '${{ parameters.pythonVersion }}'
+
+  - bash: |
+      if [ -f ${{ parameters.appFolderPath}}${{ parameters.functionAppName}}/extensions.csproj ]
+      then
+          cd ${{ parameters.appFolderPath}}${{ parameters.functionAppName}}/
+          dotnet build extensions.csproj --output ./bin
+      fi
+      echo "$(System.DefaultWorkingDirectory)/.python_packages/lib/site-packages"
+      echo "$(System.DefaultWorkingDirectory)/${{ parameters.appFolderPath}}"
+      pip${{ parameters.pythonVersion }} install --target="./.python_packages/lib/site-packages" setuptools --upgrade
+      pip${{ parameters.pythonVersion }} install --target="./.python_packages/lib/site-packages" -r requirements.txt --upgrade
+    displayName: "Build ${{ parameters.functionAppName}}"
+
+  - script: |
+      echo $PWD
+      echo $(ls)
+      cd ${{ parameters.appFolderPath}}${{ parameters.functionAppName}}/
+      pip${{ parameters.pythonVersion }} install setuptools --upgrade
+      pip${{ parameters.pythonVersion }} install -r requirements.txt --upgrade
+      python${{ parameters.pythonVersion }} -m unittest discover -v -t . -p "*_test.py"
+    displayName: "Run Unit Tests"
+
+  ## Publish only if requested
+  - ${{ if eq(parameters.boolPublishArtifacts, 'true') }}:
+    - task: ArchiveFiles@2
+      displayName: "Archive ${{ parameters.functionAppName}} files"
+      inputs:
+        rootFolderOrFile: "$(System.DefaultWorkingDirectory)/${{ parameters.appFolderPath}}${{ parameters.functionAppName}}/"
+        includeRootFolder: false
+        archiveFile: "$(System.DefaultWorkingDirectory)/${{ parameters.functionAppName}}.zip"
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact: ${{ parameters.functionAppName}} build'
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)/${{ parameters.functionAppName}}.zip'
+        ArtifactName: drop
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact: ${{ parameters.functionAppName}}-integration-test drop'
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)/${{ parameters.appFolderPath}}${{ parameters.functionAppName}}-integration-test/'
+        ArtifactName: ${{ parameters.functionAppName}}-integration-test
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact: Resources'
+      inputs:
+        PathtoPublish: ${{ parameters.resourceFolderPath}}
+        ArtifactName: resources

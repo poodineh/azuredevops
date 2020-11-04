@@ -1,0 +1,69 @@
+name: $(Build.DefinitionName)_$(Build.SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
+
+###trigger: none   #disable triggers
+trigger:
+  paths:
+    include:
+     - YAML/Builds/Common/*
+     - Pipelines/azure-pipelines-regr-appingestion.yml
+
+variables: 
+  - group: PipelineVariables
+
+resources:
+  pipelines:
+  ### PRE-REQUISITE: ENSURE THAT THE FOLLOWING PIPELINE ARTIFACTS ARE REFERENCED
+  - pipeline: DevOps
+    project: SoftwareTransformation
+    source: DevOps # Build definition ID. Found under variables
+    branch: 'refs/heads/develop'
+
+### PREP FOR TESTS
+stages:
+- stage: StageStart
+  displayName: StartRegrTests
+  jobs:  
+  ### DPrepForBuild Artifact will be used for all tests
+  - job: PrepForBuild
+    pool:
+        name: 'Hosted Windows 2019 with VS2019' # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+    steps:
+    - upload: $(Build.SourcesDirectory)
+      ### Do not change this value
+      artifact: Prepped
+      displayName: 'Uploading Prepped Sources'
+
+### START TESTS
+- stage: Test_CIPublishAndDeploy
+  dependsOn:
+    - StageStart 
+  displayName: Test_CIPublishAndDeploy
+  jobs:  
+  #1. Run PrepForBuild stub
+  - template: helper-prepforbuild-stub.yml
+    parameters:
+      AgentVmImage: 'windows-latest'
+
+   #2. Run Test
+  - template: ../YAML/Builds/NetCore/ContinousIntegration.yml
+    parameters:
+      ### Application Build Process   
+      ApplicationName: 'RegrAppDataIngestion'
+      BuildConfiguration: 'Debug'
+      SonarScanSolutionFile: './Applications/NetCoreDocker/API.sln' 
+      ProjectFileLocation: './Applications/NetCoreDocker/API/API.csproj'
+      PublishArtifacts: 'true'
+      ## NetCoreSDKVersion: '3.0.100'
+      
+      ### Unit Tests
+      TestProjectFileLocation: './Applications/NetCoreDocker/API.Tests/API.Tests.csproj'
+      RunSettingsFileLocation: ''
+      TestCategories: '' 
+      
+      ### SonarQube
+      projectKey: 'dso-sharedtemplates-regr-appdataingestion-poolname'
+      projectName: 'dso-sharedtemplates-regr-appdataingestion-poolname'
+
+      #Test target - Changing to hosted Ubuntu for regressions on deployment folder" 
+      # AgentPoolName: 'Hosted Ubuntu 1604'  # 'Hosted Windows 2019 with VS2019' 
+      AgentPoolName: 'Hosted Windows 2019 with VS2019'  

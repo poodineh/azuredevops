@@ -1,0 +1,146 @@
+### Databricks Resource, Notebook, Job, and Cluster Deployment Template ###
+
+parameters:
+  ### Deployment Parameters - set defaults
+  EnvironmentName: ''
+  AgentPoolName: ''
+  LinuxAgentPoolName: ''
+  BuildConfiguration: ''
+  ArmTemplateName: ''
+  ArmTemplateParameterName: ''
+  azureSubscription: ''
+  resourceGroupName: ''
+  location: ''
+  boolRunArmTemplate: ''
+  resourceFolderPath: ''
+  databricksResourceFolderPath: ''
+  accessToken: ''
+  databricksNotebookConfigFile: ''
+  databricksJobConfigFile: ''
+  pythonVersion: '3.8.3'
+
+### This template is used for deploying (releasing) Databricks resources via ARM templates and components (e.g. notebooks, jobs, clusters) using YAML. The same template can be used for all environments. Using the artifacts, this template optionally deploys the Azure Databricks resources (only for AzureOnly workspaces, the cloud team manages OnPrem workspaces as they are more complicated to set up) to the environment and then deploys the Databricks components. Use this in CICD pipeline. It takes the following input parameters:
+
+### Deployment Parameters - definitions
+#   EnvironmentName: name of environment
+#   AgentPoolName: Windows Agent pool name 
+#   LinuxAgentPoolName: Linux Agent pool name 
+#   BuildConfiguration: debug or build or release
+#   ArmTemplateName: name of arm template json file
+#   ArmTemplateParameterName: name of arm template config json file
+#   azureSubscription: name of subscription - e.g. flight-qa-group-SPN
+#   resourceGroupName: name of resource group - e.g. flight-qa-group
+#   location: Azure location to deploy to - e.g. West US 2
+#   boolRunArmTemplate: true or false - run arm template resource creation - only run for Azure only resources, cloud team administers on-prem related resources
+#   resourceFolderPath: resource scripts subfolder path (from root of repo)
+#   databricksResourceFolderPath: databricks script and notebook files subfolder path (from root of repo)
+#   accessToken: token value passed from secret variable in pipeline
+#   databricksNotebookConfigFile: name of notebook config file 
+#   databricksJobConfigFile: name of job config file
+#   pythonVersion: version of python to use - default to latest tested version
+
+
+###
+###  ASSUMPTIONS:
+###   assumes databricksResourceFolderPath has:
+###             Scripts/Deployment/ folder
+###             Scripts/Deployment/databricks_deploy_notebook.py file
+###             Scripts/DataLoads/ folder
+###             Scripts/DataLoads/databricks_create_jobs.py file
+###   folderpaths end in /
+###
+
+jobs:
+  # Prep job
+  - job: Prep${{ parameters.EnvironmentName }}
+    pool:
+      name: ${{ parameters.AgentPoolName }}  # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+    displayName: 'Print Parameters'
+    steps:
+    # Print Params, except accessToken
+    - powershell: |  
+        Write-Host "Parameters:"
+        Write-Host "EnvironmentName - ${{ parameters.EnvironmentName}}"
+        Write-Host "AgentPoolName - ${{ parameters.AgentPoolName}}"
+        Write-Host "LinuxAgentPoolName - ${{ parameters.LinuxAgentPoolName}}"
+        Write-Host "BuildConfiguration - ${{ parameters.BuildConfiguration}}"
+        Write-Host "ArmTemplateName - ${{ parameters.ArmTemplateName}}"
+        Write-Host "ArmTemplateParameterName - ${{ parameters.ArmTemplateParameterName}}"
+        Write-Host "azureSubscription - ${{ parameters.azureSubscription}}"
+        Write-Host "resourceGroupName - ${{ parameters.resourceGroupName}}"
+        Write-Host "location - ${{ parameters.location}}"
+        Write-Host "boolRunArmTemplate - ${{ parameters.boolRunArmTemplate}}"
+        Write-Host "resourceFolderPath - ${{ parameters.resourceFolderPath}}"
+        Write-Host "databricksResourceFolderPath - ${{ parameters.databricksResourceFolderPath}}"
+        Write-Host "databricksNotebookConfigFile - ${{ parameters.databricksNotebookConfigFile}}"
+        Write-Host "databricksJobConfigFile - ${{ parameters.databricksJobConfigFile}}"
+      displayName: 'Print Parameters'
+    
+  # Deploy resources job
+  - deployment: ResourceDeploymentTo${{ parameters.EnvironmentName }} 
+    variables:
+      BuildConfiguration: '${{ parameters.BuildConfiguration }}'
+    pool:
+        name: ${{ parameters.AgentPoolName }}  # Valid Values: 'AzureAgents', 'Azure Pipelines', 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+    displayName: Databricks Resource Deployment
+    environment:  ${{ parameters.EnvironmentName }} 
+        
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          # Show pipeline artifact folders
+          - script: dir $(Pipeline.Workspace)
+            displayName: 'Shows all pipeline artifacts'
+
+          - ${{ if eq(parameters.boolRunArmTemplate, 'true') }}:
+            # Create Databricks Resources
+            # Cloud team administers on-prem Databricks resources, so only need to run this for Azure-only Databricks resources
+            - task: AzureResourceGroupDeployment@2
+              displayName: 'Provision Databricks Resources in ${{ parameters.resourceGroupName }}'
+              inputs:
+                azureSubscription: '${{ parameters.azureSubscription }}'
+                action: 'Create Or Update Resource Group'
+                resourceGroupName: '${{ parameters.resourceGroupName }}'
+                location: '${{ parameters.location }}'
+                csmFile: '$(Pipeline.Workspace)/resources/${{ parameters.ArmTemplateName }}'
+                csmParametersFile: '$(Pipeline.Workspace)/resources/${{ parameters.ArmTemplateParameterName }}'
+
+
+  # Deploy Databricks notebooks and jobs
+  # Need separate deployment step because this uses a different agent (linux)
+  - deployment: DatabricksDeploymentTo${{ parameters.EnvironmentName }} 
+    pool:
+        name: ${{ parameters.LinuxAgentPoolName }}  # Valid Values: 'Hosted Ubuntu 1604'
+    variables:
+      BuildConfiguration: '${{ parameters.BuildConfiguration }}'
+    displayName: 'Databricks Component Deployment'
+    environment:  ${{ parameters.EnvironmentName }} 
+    dependsOn: 
+    - ResourceDeploymentTo${{ parameters.EnvironmentName }} 
+
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          # Show pipeline artifact folders
+          - script: ls $(Pipeline.Workspace)
+            displayName: 'Shows all pipeline artifacts'
+          
+          # Use python
+          - task: UsePythonVersion@0
+            displayName: 'Use Python ${{ parameters.pythonVersion }}'
+            inputs:
+              versionSpec: '${{ parameters.pythonVersion }}'
+          
+          # Deploy notebooks and jobs using script
+          - script: |
+              python -m pip install --upgrade pip
+              pip install requests
+              pip install pytz
+              python Scripts/Deployment/databricks_deploy_notebook.py ${{ parameters.accessToken }} Scripts/Deployment/${{ parameters.databricksNotebookConfigFile }}
+              python Scripts/DataLoads/databricks_create_jobs.py ${{ parameters.accessToken }} Scripts/DataLoads/${{ parameters.databricksJobConfigFile }}
+
+            workingDirectory: '$(Pipeline.Workspace)/databricks/'
+            failOnStderr: true
+            displayName: 'Deploy Databricks Notebooks and Jobs'

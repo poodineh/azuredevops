@@ -1,0 +1,221 @@
+#Type - Test Pipeline
+#Summary
+#   1. Contains multiple node variations for NetCore.ContinuousIntegration.yml
+#   2. Tests 
+#       1. Test_CIPoolNameNonCoverlet
+#       2. Test_CICoverletNetCoreTestUseCoverlet
+#       3. Test_CICoverletSQExtraPropsCustomTestArgs
+#       4. Test_ContainsPrepForBuildJob_False
+#       5. Test_DoNotCreateDeploymentArtifact  
+#   3. Tests are grouped in stages for readability
+
+name: $(Build.DefinitionName)_$(Build.SourceBranchName)_$(Date:yyyyMMdd.HHmmss.ffff)
+
+###trigger: none   #disable triggers
+trigger:
+ branches:
+   include:
+   - develop
+   - master
+   - feature/*
+ paths:
+   include:
+    - YAML/Builds/NetCore/*
+    - YAML/Builds/Security/*
+    - Pipelines/azure-pipelines-regr-netcore-ci.yml
+
+variables: 
+  - group: PipelineVariables
+
+resources:
+  pipelines:
+  ### PRE-REQUISITE: ENSURE THAT THE FOLLOWING PIPELINE ARTIFACTS ARE REFERENCED
+  - pipeline: DevOps
+    project: SoftwareTransformation
+    source: DevOps # Build definition ID. Found under variables
+    branch: 'refs/heads/develop'
+
+### PREP FOR TESTS
+stages:
+- stage: StartRegrTests
+  displayName: StartRegrTests
+  jobs:  
+  ### DPrepForBuild Artifact will be used for all tests
+  - job: PrepForBuild
+    pool:
+        name: 'Hosted Windows 2019 with VS2019' # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+    steps:
+    - upload: $(Build.SourcesDirectory)
+      ### Do not change this value
+      artifact: Prepped
+      displayName: 'Uploading Prepped Sources'
+
+### START TESTS
+#1. Test_CIPoolNameNonCoverlet
+- stage: Test_CIPoolNameNonCoverlet
+  dependsOn:
+    - StartRegrTests 
+  displayName: Test_CIPoolNameNonCoverlet
+  jobs:  
+  #1. Run PrepForBuild stub
+  - template: helper-prepforbuild-stub.yml
+    parameters:
+      AgentVmImage: 'windows-latest'
+
+   #2. Run Test
+  - template: ../YAML/Builds/NetCore/ContinousIntegration.yml
+    parameters:
+      ### Application Build Process   
+      ApplicationName: 'CIPoolNameNonCoverlet'
+      BuildConfiguration: 'Debug'
+      SonarScanSolutionFile: './Applications/NetCoreDocker/API.sln' 
+      ProjectFileLocation: './Applications/NetCoreDocker/API/API.csproj'
+      PublishArtifacts: 'true'
+      ## NetCoreSDKVersion: '3.0.100'
+      
+      ### Unit Tests
+      TestProjectFileLocation: './Applications/NetCoreDocker/API.Tests/API.Tests.csproj'
+      RunSettingsFileLocation: ''
+      TestCategories: '' 
+      
+      ### SonarQube
+      projectKey: 'dso-sharedtemplates-regr-netcore-poolname'
+      projectName: 'dso-sharedtemplates-regr-netcore-poolname'
+
+      #Test target - Changing to hosted Ubuntu for regressions on deployment folder" 
+      # AgentPoolName: 'Hosted Ubuntu 1604'  # 'Hosted Windows 2019 with VS2019' 
+      AgentPoolName: 'Hosted Windows 2019 with VS2019'  
+
+#2. Test_CICoverletNetCoreTestUseCoverlet
+- stage: Test_CICoverletNetCoreTestUseCoverlet
+  dependsOn:
+    - StartRegrTests 
+  displayName: Test_CICoverletNetCoreTestUseCoverlet
+  jobs: 
+  #1. Run PrepForBuild stub
+  - template: helper-prepforbuild-stub.yml
+    parameters:
+      AgentVmImage: 'ubuntu-latest'
+
+  #2. Run Test
+  - template: ../YAML/Builds/NetCore/ContinousIntegration.yml
+    parameters:
+      ### Application Build Process   
+      ApplicationName: 'CICoverletNetCoreTestUseCoverlet'
+      BuildConfiguration: 'Debug'
+      SonarScanSolutionFile: './Applications/NetCoreDocker/API.sln' 
+      ProjectFileLocation: './Applications/NetCoreDocker/API/API.csproj'
+      AgentVmImage: 'ubuntu-latest'
+      PublishArtifacts: 'true'
+      NetCoreSDKVersion: '3.x'
+      
+      ### Unit Tests
+      TestProjectFileLocation: './Applications/NetCoreDocker/API.CoverletTests/API.CoverletTests.csproj'
+      RunSettingsFileLocation: ''
+      TestCategories: '' 
+     
+     ### SonarQube
+      projectKey: 'dso-sharedtemplates-regr-netcore-usecoverlet'
+      projectName: 'dso-sharedtemplates-regr-netcore-usecoverlet'
+
+       #Test target
+      UseCoverlet: 'true'
+
+#3. Test_CICoverletSQExtraPropsCustomTestArgs
+- stage: Test_CICoverletSQExtraPropsCustomTestArgs
+  dependsOn:
+    - StartRegrTests 
+  displayName: Test_CICoverletSQExtraPropsCustomTestArgs
+  jobs: 
+  #1. Run PrepForBuild stub
+  - template: helper-prepforbuild-stub.yml
+    parameters:
+      AgentVmImage: 'ubuntu-latest'
+  
+  - template: ../YAML/Builds/NetCore/ContinousIntegration.yml
+    parameters:
+      ### Application Build Process   
+      ApplicationName: 'CICoverletSQExtraPropsCustomTestArgs'
+      BuildConfiguration: 'Debug'
+      SonarScanSolutionFile: './Applications/NetCoreDocker/API.sln' 
+      ProjectFileLocation: './Applications/NetCoreDocker/API/API.csproj'
+      AgentVmImage: 'ubuntu-latest'
+      PublishArtifacts: 'true'
+      NetCoreSDKVersion: '3.x'
+      
+      ### Unit Tests
+      TestProjectFileLocation: './Applications/NetCoreDocker/API.CoverletTests/API.CoverletTests.csproj'
+      RunSettingsFileLocation: ''
+      TestCategories: '' 
+      
+      ### SonarQube
+      projectKey: 'dso-sharedtemplates-regr-netcore-SQProps_TesttArgs'
+      projectName: 'dso-sharedtemplates-regr-netcore-SQProps_TesttArgs'
+
+      #Test target
+      UseCoverlet: ''   #Empty does not trigger pre-conditioned Coverlet tasks
+      CustomTestArguments: '/p:CollectCoverage=true /p:CoverletOutputFormat=opencover'
+      extraProperties: 'sonar.cs.opencover.reportsPaths=$(Build.SourcesDirectory)/**/coverage.opencover.xml'
+
+#4. Test_CI_ValidateUbuntuAndParamCaseSensitivity
+- stage: Test_CI_ValidateUbuntuAndParamCaseSensitivity
+  dependsOn:
+    - StartRegrTests 
+  displayName: Test_CI_ValidateUbuntuAndParamCaseSensitivity
+  jobs: 
+  #1. Run PrepForBuild stub
+  - template: helper-prepforbuild-stub.yml
+    parameters:
+      AgentVmImage: 'ubuntu-latest'
+
+  #2. Run Test
+  - template: ../YAML/Builds/NetCore/ContinousIntegration.yml
+    parameters:
+      ### Application Build Process   
+      ApplicationName: 'CICoverletNetCoreTestUseCoverlet'
+      BuildConfiguration: 'Debug'
+      SonarScanSolutionFile: './Applications/NetCoreDocker/API.sln' 
+      ProjectFileLocation: './Applications/NetCoreDocker/API/API.csproj'
+      AgentVmImage: 'ubuntu-latest'
+      PublishArtifacts: 'true'
+      NetCoreSDKVersion: '3.x'
+      
+      ### Unit Tests
+      TestProjectFileLocation: './Applications/NetCoreDocker/API.CoverletTests/API.CoverletTests.csproj'
+      RunSettingsFileLocation: ''
+      TestCategories: '' 
+      UseCoverlet: 'true'
+     
+     ### Test Target - Validate case sensitivity.  Actual template names are ProjectKey & ProjectName
+      ProJectKey: 'dso-sharedtemplates-regr-netcore-paramcasesensitivity'
+      prOjeCtName: 'dso-sharedtemplates-regr-netcore-paramcasesensitivity'
+
+#4. Test_ContainsPrepForBuildJob_False
+- stage: Test_ContainsPrepForBuildJob_False
+  dependsOn: 'StartRegrTests'
+  jobs: 
+  #1. Does not contain PrepForBuild Job
+  #2. Run Test
+  - template: ../YAML/Builds/NetCore/ContinousIntegration.yml
+    parameters:
+      ### Application Build Process   
+      ApplicationName: 'CICoverletNetCoreTestUseCoverlet'
+      BuildConfiguration: 'Debug'
+      SonarScanSolutionFile: './Applications/NetCoreDocker/API.sln' 
+      ProjectFileLocation: './Applications/NetCoreDocker/API/API.csproj'
+      AgentVmImage: 'ubuntu-latest'
+      PublishArtifacts: 'true'
+      NetCoreSDKVersion: '3.x'
+      
+      ### Unit Tests
+      TestProjectFileLocation: './Applications/NetCoreDocker/API.CoverletTests/API.CoverletTests.csproj'
+      RunSettingsFileLocation: ''
+      TestCategories: '' 
+      UseCoverlet: 'true'
+      
+      ### SonarQube
+      projectKey: 'dso-sharedtemplates-regr-netcore-Test_ContainsPrepForBuildJob_False'
+      projectName: 'dso-sharedtemplates-regr-netcore-Test_ContainsPrepForBuildJob_False'
+
+      #Test target
+      ContainsPrepForBuildJob: 'false'

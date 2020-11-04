@@ -1,0 +1,106 @@
+#Type: Step Yaml Template
+#Summary: 
+#   1. Restores, Builds, and Publishes the Project Artifact
+#   2. Execute SonarQube Security Scan & Unit Tests.  Results are published to SonarQube
+#   3. Templates references
+#       1. Yaml/Builds/NetCore/DotNetCoreBuildAndPublish.yml
+#       2. Yaml/Builds/NetCore/DotNetCoreQualitySteps.yml
+
+parameters:
+  # Application Build Process   
+  ApplicationName: ''
+  AgentPoolName: ''
+  AgentVmImage: ''
+  BuildConfiguration: ''
+  SonarScanSolutionFile: ''
+  ProjectFile: ''
+  PathToNugetConfig: ''
+  
+  # Unit Tests
+  TestProjectFileLocation: ''
+  RunSettingsFileLocation: ''
+  TestCategories: ''
+  UseCoverlet: ''
+  CustomTestArguments: ''
+  
+  # SonarQube- Not Triggered unless both have values
+  ProjectKey: ''
+  ProjectName: ''
+  ExtraProperties: ''
+
+steps:
+#1. LOGGING
+- powershell: |  
+    Write-Host "Build Parameters:"
+    Write-Host "ApplicationName - ${{ parameters.ApplicationName}}"
+    Write-Host "AgentPoolName - ${{ parameters.AgentPoolName}}"
+    Write-Host "AgentVmImage - ${{ parameters.AgentVmImage}}"
+    Write-Host "BuildConfiguration - ${{ parameters.BuildConfiguration}}"
+    Write-Host "SonarScanSolutionFile - ${{ parameters.SonarScanSolutionFile}}"
+    Write-Host "ProjectFile - ${{ parameters.ProjectFile}}"
+    Write-Host "PathToNugetConfig - ${{ parameters.PathToNugetConfig}}"
+    Write-Host "TestProjectFileLocation - ${{ parameters.TestProjectFileLocation}}"
+    Write-Host "RunSettingsFileLocation - ${{ parameters.RunSettingsFileLocation}}"
+    Write-Host "TestCategories - ${{ parameters.TestCategories}}"
+    Write-Host "UseCoverlet - ${{ parameters.UseCoverlet}}"
+    Write-Host "CustomTestArguments - ${{ parameters.CustomTestArguments}}"
+    Write-Host "ProjectKey - ${{ parameters.ProjectKey}}"
+    Write-Host "ProjectName - ${{ parameters.ProjectName}}"
+    Write-Host "ExtraProperties - ${{ parameters.ExtraProperties}}"
+  displayName: 'Print All Quality and Security Scan Build Parameters'
+
+#2. BUILD & PUBLISH 
+- template: ../NetCore/DotNetCoreBuildAndPublish.yml  # Template reference
+  parameters:
+    Name: ${{ parameters.ApplicationName }}
+    AgentPoolName: ${{ parameters.AgentPoolName }}
+    AgentVmImage: ${{ parameters.AgentVmImage }}
+    BuildConfiguration: ${{ parameters.BuildConfiguration }}
+    ## Application Scan Files
+    ## This is an issue right now with SonarQube. .Net core doesn't build individual by project. Sonnar Scanners uses a SLN file
+    ## building twise but publishing once
+    ## Changing the project file instead of solution
+    ProjectFile: ${{ parameters.ProjectFile }}
+    PublishArtifacts: 'true'
+    NetCoreSDKVersion: ${{ parameters.NetCoreSDKVersion }}
+    PathToNugetConfig: ${{ parameters.PathToNugetConfig }}
+
+#Adding to Ensure NetCore 2.x is installed which is required by SQ.  ubuntu-latest does not have it
+#Expression is used since not ubuntu runs using sdk 3.x will break on the test restore
+- ${{ if startsWith(parameters.AgentVmImage, 'ubuntu') }}:
+  - task: UseDotNet@2
+    displayName: 'SQ-Installing .Net Core SDK 2.x'
+    inputs:
+      packageType: 'sdk'
+      version:  2.x
+      includePreviewVersions: true
+
+#3. SONARQUBE PREPARE - Not Triggered unless both have values
+- template: SonarQubePrepareMsBuild.yml  # Template reference
+  parameters:
+    ProjectKey: '${{ parameters.ProjectKey }}' #Project Key
+    ProjectName: '${{ parameters.ProjectName }}' #Project Name
+    ExtraProperties: '${{ parameters.ExtraProperties }}'
+
+#4. QUALITY STEPS
+- template: ../NetCore/DotNetCoreQualitySteps.yml  # Template reference
+  parameters:
+    Name: '${{ parameters.ApplicationName }}Checks' # 'Ubuntu 16.04' NOTE: Code Coverage doesn't work on Linux Hosted Agents. Bummer. 
+    AgentPoolName: ${{ parameters.AgentPoolName }}
+    AgentVmImage: ${{ parameters.AgentVmImage }}
+    BuildConfiguration: ${{ parameters.BuildConfiguration }}
+    ### Use SonarScan Solution File for building the application used for SQ tasks
+    SonarScanSolutionFile: ${{ parameters.SonarScanSolutionFile }}
+    TestProjectFile: ${{ parameters.TestProjectFileLocation }}
+    RunSettingsFile: ${{ parameters.RunSettingsFileLocation }}
+    TestCategories: ${{ parameters.TestCategories }}
+    NetCoreSDKVersion: ${{ parameters.NetCoreSDKVersion }}
+    PathToNugetConfig: ${{ parameters.PathToNugetConfig }}
+    UseCoverlet: ${{ parameters.UseCoverlet }}
+    CustomTestArguments: ${{ parameters.CustomTestArguments }}
+
+#5. SONARQUBE ANALYZE - Not Triggered unless both have values
+- template: SonarQubeAnalyzeAndPublish.yml  # Template reference
+  parameters:
+    ProjectKey: '${{ parameters.ProjectKey }}' #Project Key
+    ProjectName: '${{ parameters.ProjectName }}' #Project Name

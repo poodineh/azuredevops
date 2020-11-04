@@ -1,0 +1,113 @@
+
+  #Recommend only putting max of 150 users. if you need more throughput reduce thinktime
+  #Read detail on the template in the following path: https://itsals.visualstudio.com/QualityEngineeringGIT/_wiki/wikis/QualityEngineeringGIT.wiki/1677/Performance-Test-Template-wiki
+parameters:
+    #pipeline controls and assets
+    StopPipelineonFailure: ''
+    ApacheJmeterFolder: ''
+    JmxFilePath: ''
+  #Load scenario specification
+    users: ''
+    rampup: '' #Seconds
+    duration: '' #Seconds
+    hostname: ''
+    subscriptionkey: '' #Security Issue need to be hardcoded
+    throughput: '' #requests per minute
+    responsetimetarget: '' #Milliseconds
+
+steps:
+#get the dependency file by checking out our repository
+#- checkout: git://SoftwareTransformation/DevOps@feature/perfDependencies
+
+#project: Quality Engineering GIT , Pipeline: Publish Jmeter, Latest from it
+- task: DownloadBuildArtifacts@0
+  inputs:
+    buildType: 'specific'
+    project: '23e36801-9259-4ca4-9894-06dd70a4434b'
+    pipeline: '6006'
+    buildVersionToDownload: 'latest'
+    downloadType: 'single'
+    artifactName: 'jmeter'
+    downloadPath: '$(Build.SourcesDirectory)'
+#Extract Jmeter that is in the dependency folder
+- task: ExtractFiles@1
+  inputs:
+    archiveFilePatterns: '$(Build.SourcesDirectory)\jmeter\*.zip'
+    destinationFolder: '$(Build.BinariesDirectory)\Jmeter'
+  displayName: 'Extract Jmeter that is in the dependency folder'
+  timeoutInMinutes: 2
+#Copy the jmx files required for load testing
+- task: CopyFiles@2
+  inputs:
+    sourceFolder: ' $(Build.SourcesDirectory)\${{ Parameters.JmxFilePath }}'
+    Contents: '*' 
+    TargetFolder: '$(Build.BinariesDirectory)\TestScript'
+    CleanTargetFolder: true
+  displayName: 'Clean the target folder and Get Jmx Files for load Testing'
+  timeoutInMinutes: 1
+#Clean up folder and execute the load tests
+- powershell: | 
+    #get file name of jmx file
+
+    cd $(Build.BinariesDirectory)\TestScript
+    $files = get-childitem -Filter *.jmx
+    foreach($file in $files)
+    {
+      $testscript=$file.Name
+    }
+
+    #Delete all files from previous runs
+    if(Test-Path -Path $(Build.BinariesDirectory)\results)
+    {
+      Remove-Item -Path $(Build.BinariesDirectory)\results -Force -Recurse
+    }
+    Write-Host "Following are the files existing in the results folder before starting test"
+    Get-ChildItem -Path $(Build.BinariesDirectory)\results  -Recurse -Force
+    #Create Directory for jtl file
+    New-Item -ItemType Directory -Force -Path $(Build.BinariesDirectory)\results\jtl
+
+    #create directory for webreport
+    New-Item -ItemType Directory -Force -Path $(Build.BinariesDirectory)\results\webReport
+
+    #create directory for jmeter logs
+    New-Item -ItemType Directory -Force -Path $(Build.BinariesDirectory)\results\logs
+
+    cmd.exe /c $(Build.BinariesDirectory)\Jmeter\apache-jmeter-5.3\bin\jmeter.bat  `
+    -Jusers=${{ parameters.users }}  `
+    -Jrampup=${{ parameters.rampup }}  `
+    -Jduration=${{ parameters.duration }}  `
+    -Jhostname='${{ parameters.hostname }}'  `
+    -JsubscriptionKey=${{ parameters.subscriptionkey }}  `
+    -Jthroughput=${{ parameters.throughput }}  `
+    -Jresponsetimetarget=${{ parameters.responsetimetarget }}  `
+    -n -t $(Build.BinariesDirectory)\TestScript\$testscript  `
+    -l $(Build.BinariesDirectory)\results\jtl\output.jtl  `
+    -e -o $(Build.BinariesDirectory)\results\webReport `
+    -LINFO  `
+    -j $(Build.BinariesDirectory)\results\logs\jmeter.log
+    
+    Write-Host "Jmeter Test Finished"
+  displayName: 'Execute the load test powershell'
+  timeoutInMinutes: 40
+
+#(optional) Breakbuild bauild based on 90th percentaile response times vs. target
+- powershell: |
+    $parsed = Get-Content -Raw -Path $(Build.BinariesDirectory)\results\webReport\statistics.json | ConvertFrom-Json
+    foreach ($line in $parsed | Get-Member) {
+      if($parsed.$($line.Name).pct3ResTime -gt ${{ parameters.ResponseTimeTarget }}){
+        Write-Host  "##vso[task.LogIssue type=error;]Tranasction" $parsed.$($line.Name).transaction "has not met sla"
+        # exit 1 # not breaking as we want to publish results irrespective of failure
+      }else{
+        Write-Host "Transaction:" $parsed.$($line.Name).transaction ", Response Time:" $parsed.$($line.Name).pct3ResTime
+      }
+    }
+  condition: eq('${{ Parameters.StopPipelineonFailure }}','true')
+  displayName: 'Break pipeline if SLA not met based on 90th percentile'
+  timeoutInMinutes: 2
+#(Optional) Publish the test results, Jmeter logs and Jtl file for further analysis
+- task: PublishBuildArtifacts@1
+  displayName: 'Publish Jmeter logs and results for analysis and triage'
+  inputs:
+    PathtoPublish: '$(Build.BinariesDirectory)\results'
+    ArtifactName: TestResult
+  timeoutInMinutes: 2

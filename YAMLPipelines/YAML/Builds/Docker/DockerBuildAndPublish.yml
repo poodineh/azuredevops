@@ -1,0 +1,98 @@
+parameters:
+  Name: ''
+  dockerimagename: ''
+  dockerimagetag: ''
+  dockerapppath: ''
+  dockerfile: ''
+  dockerbuildargs: ''
+  ArtifactName: ''
+  dockerimagescan: ''
+   
+steps:
+- ${{ if ne(parameters.ArtifactName, '') }}:
+  - download: current
+    artifact: ${{ parameters.ArtifactName }}
+    displayName: 'Downloading Prepped Pipeline Artifacts'
+  
+- ${{ if eq(parameters.ArtifactName, '') }}:
+  - download: current
+    artifact: Prepped
+    displayName: 'Downloading Prepped Pipeline Artifacts'
+           
+# Shows all pipeline artifacts
+- powershell: ls $(Pipeline.Workspace)
+  displayName: 'Shows all Prepped Pipeline Artifacts'
+
+- powershell: |  
+    Write-Host "Build Parameters:"
+    Write-Host "Name - ${{ parameters.Name}}"
+    Write-Host "Docker Image Name - ${{ parameters.dockerimagename}}"
+    Write-Host "Docker Image Tag - ${{ parameters.dockerimagetag}}"
+    Write-Host "Docker Build Path - ${{ parameters.dockerapppath}}"
+    Write-Host "Docker File - ${{ parameters.dockerfile}}"
+    Write-Host "Docker Build Arguments - ${{ parameters.dockerbuildargs}}"
+  displayName: 'Print Docker Parameters'
+
+- powershell: |
+    # Get Build Date Variable if need be
+    $date=$(Get-Date -Format "yyyyMMdd");
+    Write-Host "##vso[task.setvariable variable=builddate]$date"
+
+    # Set branchname to lower case because of docker repo standards or it will error out
+    $branchname= $env:sourcebranchname.ToLower();
+    Write-Host "##vso[task.setvariable variable=SourceBranch]$branchname"
+
+    # Set docker tag from build definition name: $(Date:yyyyMMdd)$(Rev:.r)
+    $buildnamesplit = $env:buildname.Split("_")
+    $dateandrevid = $buildnamesplit[2]
+    Write-Host "##vso[task.setvariable variable=DockerTag]$dateandrevid"
+  displayName: 'Powershell: Set Environment Variables for Docker Tag and Branch Repo Name'
+  env:
+    sourcebranchname: '$(Build.SourceBranchName)' # Used to specify Docker Image Repo
+    buildname: '$(Build.BuildNumber)' # The name of the completed build which is defined above the YAML file
+
+- ${{ if eq(parameters.dockerimagetag, '') }}:
+  - powershell: |  
+      #Set pipeline variable for Docker Image Endpoint
+      Write-Host "##vso[task.setvariable variable=DockerImageEndpoint]acr.azurecr.io/${{ parameters.dockerimagename }}:$(DockerTag)"
+      Write-Host "##vso[task.setvariable variable=DockerImageEndpointLatest]acr.azurecr.io/${{ parameters.dockerimagename }}:latest"
+    displayName: 'Set Default Docker Image Endpoint and Tag as Job Variable '
+
+- ${{ if ne(parameters.dockerimagetag, '') }}:
+  - powershell: |  
+      #Set pipeline variable for Docker Image Endpoint
+      Write-Host "##vso[task.setvariable variable=DockerImageEndpoint]acr.azurecr.io/${{ parameters.dockerimagename }}:${{ parameters.dockerimagetag }}"
+      Write-Host "##vso[task.setvariable variable=DockerImageEndpointLatest]acr.azurecr.io/${{ parameters.dockerimagename }}:latest"
+    displayName: 'Set Docker Image Endpoint With Custom Image Tag Parameter as Job Variable'
+
+- ${{ if eq(parameters.dockerbuildargs, '') }}:
+  - powershell: |
+        docker build --no-cache -f ${{ parameters.dockerfile }} -t $(DockerImageEndpoint) -t $(DockerImageEndpointLatest) ${{ parameters.dockerapppath }} --label "TeamProject=$(system.teamproject)" --label "BuildNumber=$(build.buildnumber)" --label "BuildDefinition=$(build.definitionname)" --label "Repository=$(build.repository.name)"
+    displayName: 'Building Docker Image Without Arguments'      
+
+- ${{ if ne(parameters.dockerbuildargs, '') }}:
+  - powershell: |
+        docker build --no-cache -f ${{ parameters.dockerfile }} -t $(DockerImageEndpoint) -t $(DockerImageEndpointLatest) ${{ parameters.dockerapppath }} ${{ parameters.dockerbuildargs }} --label "TeamProject=$(system.teamproject)" --label "BuildNumber=$(build.buildnumber)" --label "BuildDefinition=$(build.definitionname)" --label "Repository=$(build.repository.name)"
+    displayName: 'Building Docker Image with Arguments'   
+
+- ${{ if eq(parameters.dockerimagescan, 'true') }}:
+  - task: aquasec.aquasec.showCommits.aquasecScanner@4
+    displayName: 'Scanning Docker Container Image'
+    inputs:
+      image: '$(DockerImageEndpoint)'
+      connection: 'AAGAquaScanner-$(System.TeamProject)'
+      caCertificates: true
+
+- task: Docker@2
+  inputs:
+    containerRegistry: 'acr-$(System.TeamProject)'
+    command: 'login'
+  displayName: 'Login to acr.azurecr.io Private Container Registry'
+
+### User is specified in each team projects pipeline variable
+- powershell: |  
+      docker push $(DockerImageEndpoint)
+      docker push $(DockerImageEndpointLatest)
+  displayName: 'Pushing Docker Image to acr.azurecr.io Private Container Registry'
+
+  

@@ -1,0 +1,14 @@
+parameters:
+  ProjectFolderPath: ''  
+  TestNpmCommand: ''
+  TestResultFileName: ''
+
+steps:
+- script: |
+    pushd ${{ parameters.ProjectFolderPath }} && npm install && popd
+    pushd ${{ parameters.ProjectFolderPath }} && npm run ${{ parameters.TestNpmCommand }} && popd
+
+- task: PublishTestResults@2
+  displayName: 'Publish Test Results at **/${{ parameters.TestResultFileName }}'
+  inputs:
+    testResultsFiles: '**/${{ parameters.TestResultFileName }}'

@@ -1,0 +1,37 @@
+parameters:
+  Name: ''
+  Environment: ''
+  ProjectFolderPath: ''  
+  ProjectOutputFolder: ''
+
+steps:
+- script: |
+    pushd ${{ parameters.ProjectFolderPath }} && npm install && popd
+    pushd ${{ parameters.ProjectFolderPath }} && npm run build:${{ parameters.Environment}} && popd
+
+## Copy the client to the staging directory
+- task: CopyFiles@2
+  inputs:
+    sourceFolder: ${{ parameters.ProjectOutputFolder }} 
+    contents: '**/*' 
+    targetFolder: '$(Build.ArtifactStagingDirectory)'
+    cleanTargetFolder: true
+
+## Archive the files into a zip file for publishing
+- task: ArchiveFiles@2
+  inputs:
+    rootFolderOrFile: $(Build.ArtifactStagingDirectory)
+    archiveType: 'zip'
+    archiveFile: '$(Build.ArtifactStagingDirectory)/${{ parameters.Name }}_$(Build.BuildId).${{ parameters.Environment }}.zip'
+    includeRootFolder: false
+
+# ## Publish the zip file
+# - task: PublishBuildArtifacts@1
+#   inputs:
+#   pathtoPublish: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+
+- task: PublishBuildArtifacts@1
+  displayName: 'Publish React Artifact'
+  inputs:
+    pathtoPublish: '$(Build.ArtifactStagingDirectory)/${{ parameters.Name }}_$(Build.BuildId).${{ parameters.Environment }}.zip'
+    artifactName: ${{ parameters.name }}_Package

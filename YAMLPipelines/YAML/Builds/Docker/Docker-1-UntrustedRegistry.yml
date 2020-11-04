@@ -1,0 +1,90 @@
+#Type: Step Yaml Template
+#Summary: 
+#   1. This template pushes an image to the Untrusted Registry.  
+#   2. The Security Scan is not performed.
+#   3. Docker-2-TrustedRegistry.yml should be called in a separate job in your triggering yaml pipeline.
+#   4. See the Template-DockerCIBase.yml for an example
+#   5. KubernetesFolderLocation is optional.  If populated, an artifact will be created for the k8s files under this location in Docker-2-TrustedRegistry.yml
+
+parameters:
+  Dockerimagename: '' #Prefix with your SonarQube team prefix and use all lowercase
+  Dockerimagetag: '' #Optional
+  Dockerapppath: '' #Add the application folder path
+  Dockerfile: '' #Add the dockerfile path
+  Dockerbuildargs: '' #Optional
+  ArtifactName: '' #Name of artifact containing your files to download. Prepped is the default
+  KubernetesFolderLocation: ''  #Optional. See notes above
+   
+steps:
+- ${{ if ne(parameters.ArtifactName, '') }}:
+  - download: current
+    artifact: ${{ parameters.ArtifactName }}
+    displayName: 'Downloading Prepped Pipeline Artifacts'
+  
+- ${{ if eq(parameters.ArtifactName, '') }}:
+  - download: current
+    artifact: Prepped
+    displayName: 'Downloading Prepped Pipeline Artifacts'
+           
+# Shows all pipeline artifacts
+- powershell: ls $(Pipeline.Workspace)
+  displayName: 'Shows all Prepped Pipeline Artifacts'
+
+- powershell: |  
+    Write-Host "Build Parameters:"
+    Write-Host "Name - ${{ parameters.Name}}"
+    Write-Host "Docker Image Name - ${{ parameters.Dockerimagename}}"
+    Write-Host "Docker Image Tag - ${{ parameters.Dockerimagetag}}"
+    Write-Host "Docker Build Path - ${{ parameters.Dockerapppath}}"
+    Write-Host "Docker File - ${{ parameters.Dockerfile}}"
+    Write-Host "Docker Build Arguments - ${{ parameters.Dockerbuildargs}}"
+  displayName: 'Print Docker Parameters'
+
+- ${{ if eq(parameters.Dockerimagetag, '') }}:
+  - powershell: |
+      $buildnamesplit = $env:buildname.Split("_")
+      $buildnumber = $buildnamesplit[$buildnamesplit.Length-1]
+      Write-Host "##vso[task.setvariable variable=DockerTag;isOutput=True]$buildnumber"
+    displayName: 'Set Docker Tag Output Variable Using Default'
+    env:
+      buildname: '$(Build.BuildNumber)' # The name of the completed build which is defined above the YAML file
+    name: SetTagVar
+
+- ${{ if ne(parameters.Dockerimagetag, '') }}:
+  - powershell: |
+      Write-Host "##vso[task.setvariable variable=DockerTag;isOutput=True]${{ parameters.Dockerimagetag }}"
+    displayName: 'Set Docker Tag Output Variable Using Parameter'
+    name: SetTagVar
+
+- powershell: |
+    Write-Host "Docker Tag: $(SetTagVar.DockerTag)"
+  displayName: 'PrintDockerTag'
+  name: PrintDockerTag
+
+#2. Create runtime variables
+- powershell: |
+    Write-Host "##vso[task.setvariable variable=ImageUntrusted;isOutput=True]$(ContainerRegistry)/${{ parameters.Dockerimagename }}:$(SetTagVar.DockerTag)"
+    Write-Host "##vso[task.setvariable variable=ImageUntrustedLatest;isOutput=True]$(ContainerRegistry)/${{ parameters.Dockerimagename }}:latest"
+  displayName: 'Set Image Output Variables'
+  name: SetImageVars
+
+- powershell: |
+      #Login to acr for docker build base image
+      docker login -u "$(acrUser)" -p "$(acrKey)" $(TrustedRegistry) 
+  displayName: 'Docker login to acr to pull base image during build'
+
+- ${{ if eq(parameters.dockerbuildargs, '') }}:
+  - powershell: |
+        docker build --no-cache -f ${{ parameters.Dockerfile }} -t "$(SetImageVars.ImageUntrusted)" -t "$(SetImageVars.ImageUntrustedLatest)" ${{ parameters.Dockerapppath }} --label "TeamProject=$(system.teamproject)" --label "BuildNumber=$(build.buildnumber)" --label "BuildDefinition=$(build.definitionname)" --label "Repository=$(build.repository.name)"
+    displayName: 'Building Docker Image Without Arguments'      
+
+- ${{ if ne(parameters.dockerbuildargs, '') }}:
+  - powershell: |
+        docker build --no-cache -f ${{ parameters.Dockerfile }} -t "$(SetImageVars.ImageUntrusted)" -t "$(SetImageVars.ImageUntrustedLatest)" ${{ parameters.Dockerapppath }} ${{ parameters.Dockerbuildargs }} --label "TeamProject=$(system.teamproject)" --label "BuildNumber=$(build.buildnumber)" --label "BuildDefinition=$(build.definitionname)" --label "Repository=$(build.repository.name)"
+    displayName: 'Building Docker Image with Arguments'   
+
+- powershell: |
+      docker login -u "$(dockeruser)" -p "$(dockeruser)" $(ContainerRegistry) 
+      docker push "$(SetImageVars.ImageUntrusted)"
+      docker push "$(SetImageVars.ImageUntrustedLatest)"
+  displayName: 'Pushing Docker Image to $(ContainerRegistry) Private Untrusted Container Registry'

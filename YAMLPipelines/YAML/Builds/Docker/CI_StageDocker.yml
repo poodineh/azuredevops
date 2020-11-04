@@ -1,0 +1,99 @@
+#Type: Stage Yaml Template
+#Summary: 
+#   1. Builds docker and orchestrates publishing to the untrusted and trusted registries
+#   2. This template is the main entry point for publishing to the ACR and uses an ubuntu agent
+#   3. The stage should not run in parallel with App Build stage.  
+#       1. Instead, add the App Build Stage name to the DependsOnStage node.
+#       2. CI_ArtifactsBuildStage is the default
+#   4. Templates references
+#       1. ../Docker/DockerBuildAndPublishUntrusted.yml
+#       2. ../Docker/AquaScanAndPublishTrusted.yml
+
+parameters:
+  Name: ''
+  Dockerimagename: ''
+  Dockerimagetag: ''
+  Dockerapppath: ''
+  Dockerfile: ''
+  Dockerbuildargs: ''
+  ArtifactName: ''
+  Dockerimagescan: ''
+  StageName: 'CI_DockerBuildStage' #default value
+  DependsOnStage: 'CI_ArtifactsBuildStage' #default value
+  KubernetesFolderLocation: 'Kubernetes'  #default value- 'Kubernetes' if folder is located at the repository root
+
+stages:
+- stage: '${{parameters.StageName}}'
+  dependsOn: '${{parameters.DependsOnStage}}'
+  variables:
+    ContainerRegistry: "acrsandbox.azurecr.io"
+    TrustedRegistry: "acr.azurecr.io"
+  
+  jobs:
+  ##1. Build and Publish to the untrusted registry
+  - job: ${{ parameters.Name }}DockerBuildAndPublishUntrusted
+    pool:
+      vmImage: 'ubuntu-latest'
+    workspace:
+      clean: all
+
+    steps:
+    #1. Prepare variables
+    - powershell: |
+        $buildnamesplit = $env:buildname.Split("_")
+        $buildnumber = $buildnamesplit[2]
+        Write-Host "##vso[task.setvariable variable=DockerTag;isOutput=True]$buildnumber"
+      displayName: 'Set Docker Tag Output Variable'
+      env:
+        buildname: '$(Build.BuildNumber)' # The name of the completed build which is defined above the YAML file
+      name: SetTagVar
+
+    #2. Create runtime variables
+    - powershell: |
+        Write-Host "##vso[task.setvariable variable=AquaImageUntrusted;isOutput=True]${{ parameters.dockerimagename }}:$(SetTagVar.DockerTag)"
+        Write-Host "##vso[task.setvariable variable=ImageUntrusted;isOutput=True]$(ContainerRegistry)/${{ parameters.dockerimagename }}:$(SetTagVar.DockerTag)"
+        Write-Host "##vso[task.setvariable variable=ImageTrusted;isOutput=True]$(TrustedRegistry)/${{ parameters.dockerimagename }}:$(SetTagVar.DockerTag)"
+        Write-Host "##vso[task.setvariable variable=ImageUntrustedLatest;isOutput=True]$(ContainerRegistry)/${{ parameters.dockerimagename }}:latest"
+        Write-Host "##vso[task.setvariable variable=ImageTrustedLatest;isOutput=True]$(TrustedRegistry)/${{ parameters.dockerimagename }}:latest"
+      displayName: 'Set Image Output Variables'
+      name: SetImageVars
+
+    #3. Log
+    - powershell: Echo "Untrusted Image -- $(SetImageVars.ImageUntrusted), Trusted Image -- $(SetImageVars.ImageTrusted)"
+      displayName: 'Show Image location and current Docker Build Tag - Untrusted'  
+
+    #4. Publish to untrusted registry
+    - template: ../Docker/DockerBuildAndPublishUntrusted.yml  # Steps template reference
+      parameters:
+        Name: ${{ parameters.Name }}
+        Dockerimagename: ${{ parameters.Dockerimagename }}
+        Dockerapppath:  ${{ parameters.Dockerapppath }}
+        Dockerfile:  ${{ parameters.Dockerfile }}   
+        Dockerbuildargs:  ${{ parameters.Dockerbuildargs }}   
+        Dockerimagetag: ${{ parameters.Dockerimagetag }}  
+        ArtifactName: ${{ parameters.ArtifactName }}     
+
+  ##2. Build and Publish to the trusted registry. Only triggered if Dockerimagescan is set to true
+  - job: ${{ parameters.Name }}AquaScanAndPublishTrusted
+    pool:
+      name: 'aqua-scanners' # Common agent pool for Aqua CI scan jobs 
+    dependsOn: ${{ parameters.Name }}DockerBuildAndPublishUntrusted
+    condition: and(succeeded(), eq('${{ parameters.Dockerimagescan }}', 'true'))
+    workspace:
+      clean: all
+    variables:
+      ImageUntrusted: $[ dependencies.${{ parameters.Name }}DockerBuildAndPublishUntrusted.outputs['SetImageVars.ImageUntrusted'] ]
+      ImageTrusted: $[ dependencies.${{ parameters.Name }}DockerBuildAndPublishUntrusted.outputs['SetImageVars.ImageTrusted'] ]
+      ImageUntrustedLatest: $[ dependencies.${{ parameters.Name }}DockerBuildAndPublishUntrusted.outputs['SetImageVars.ImageUntrustedLatest'] ]
+      ImageTrustedLatest: $[ dependencies.${{ parameters.Name }}DockerBuildAndPublishUntrusted.outputs['SetImageVars.ImageTrustedLatest'] ]
+      AquaImageUntrusted: $[ dependencies.${{ parameters.Name }}DockerBuildAndPublishUntrusted.outputs['SetImageVars.AquaImageUntrusted'] ]
+    steps:
+    
+    #1. Attempt to publish to untrusted registry
+    - template: ../Docker/AquaScanAndPublishTrusted.yml  # Steps template reference
+      parameters:
+        KubernetesFolderLocation: ${{ parameters.KubernetesFolderLocation }}
+      
+    #2. Log
+    - powershell: Echo "Endpoint $(ImageTrusted)"
+      displayName: 'Show Image location and current Docker Build Tag - Trusted'

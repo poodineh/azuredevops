@@ -1,0 +1,71 @@
+### MongoDB Index Deployment Template ###
+
+# This template is used for deploying MongoDB indexes  and email templates using python script and parameter file. Use this in CICD pipeline. It takes the following input parameters:
+
+#   EnvironmentName: name of environment
+#   LinuxAgentPoolName: Linux Agent pool name 
+#   BuildConfiguration: build or release
+#   azureSubscription: name of subscription - e.g. 'flight-qa-group-SPN'
+#   keyVaultName: name of key vault - e.g. 'flight-qa-kv'
+#   scriptFolderPath: mongodb scripts subfolder location and expect below mandatory script files
+#                     booststrap.py  --> used for index script logic for MongoDB
+#                     templaterunner.py  --> used for templates/json files deployment to MongoDB                
+#   pythonVersion: version of python to use - default to latest tested version
+
+parameters:
+    ### Deployment Parameters
+    EnvironmentName: ''
+    LinuxAgentPoolName: ''
+    BuildConfiguration: ''
+    azureSubscription: ''
+    keyVaultName: ''
+    scriptFolderPath: ''
+    pythonVersion: '3.6'
+
+jobs:    
+  # Deploy resources job
+  - deployment: MongoDbIndexDeploymentTo${{ parameters.EnvironmentName }} 
+    variables:
+      BuildConfiguration: '${{ parameters.BuildConfiguration }}'
+    pool:
+        name: ${{ parameters.LinuxAgentPoolName }}  # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+    displayName: MongoDB Index Deployment
+    environment:  ${{ parameters.EnvironmentName }} 
+        
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          - powershell: |  
+              Write-Host "Build Parameters:"
+              Write-Host "EnvironmentName - ${{ parameters.EnvironmentName}}"
+              Write-Host "LinuxAgentPoolName - ${{ parameters.LinuxAgentPoolName}}"
+              Write-Host "BuildConfiguration - ${{ parameters.BuildConfiguration}}"
+              Write-Host "azureSubscription - ${{ parameters.azureSubscription}}"
+              Write-Host "keyVaultName - ${{ parameters.keyVaultName}}"
+              Write-Host "scriptFolderPath - ${{ parameters.scriptFolderPath}}"
+            displayName: 'Print BuildAndPublish Parameters'
+
+          - task: AzureKeyVault@1
+            inputs:
+              azureSubscription: '${{ parameters.azureSubscription }}'
+              KeyVaultName: '${{ parameters.keyVaultName }}'
+              SecretsFilter: '*'
+
+            # Use python
+          - task: UsePythonVersion@0
+            displayName: 'Use Python ${{ parameters.pythonVersion }}'
+            inputs:
+              versionSpec: '${{ parameters.pythonVersion }}'
+              
+          - script: |
+              python${{ parameters.pythonVersion }} -m venv worker_venv
+              source worker_venv/bin/activate
+              pip${{ parameters.pythonVersion }} install pymongo
+              pip${{ parameters.pythonVersion }} install dnspython
+              cd $(Pipeline.Workspace)/resources/${{ parameters.scriptFolderPath}}
+              python${{ parameters.pythonVersion }} 'bootstrap.py' --mongodb '$(MongoDbConnectionString)'
+              python${{ parameters.pythonVersion }} 'templaterunner.py' --mongodb '$(MongoDbConnectionString)'
+
+            displayName: "install pymongo"

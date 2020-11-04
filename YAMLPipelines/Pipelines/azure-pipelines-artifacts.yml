@@ -1,0 +1,26 @@
+name: $(Build.DefinitionName)_$(Build.SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
+
+schedules:
+- cron: "0 */12 * * *"
+  displayName: 'Daily Schedule Build Artifacts'
+  branches:
+    include:
+    - master
+      
+trigger:
+# branch triggers. 
+  branches:
+    include:
+    - master
+
+stages:
+- stage: CI_ArtifactsBuildStage
+  displayName: CI_ArtifactsBuildStage
+  jobs:
+  - job: UploadMainSharedArtifacts
+    pool:
+        name: 'Hosted Windows 2019 with VS2019' # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+    steps:
+    - upload: ./YAML/Artifacts
+      artifact: SharedArtifacts
+      displayName: 'Uploading Shared Artifacts Sources' 

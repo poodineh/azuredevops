@@ -1,0 +1,170 @@
+#Type: Job Yaml Template
+#Summary: 
+#   1. Contains 3 jobs which build, test, and publish a Node Application
+#   2. Executes SonarQube Security Scan & Unit Tests.  Results are published to SonarQube
+#   3. If successful, publish all artifacts including PrepForBuild resources
+#   4. Templates references
+#       1. ../Security/SonarQubeScanNode.yml
+
+parameters:
+  #Agent Pools parameters
+  AgentPoolName: 'Azure Pipelines' #To run on custom self-hosted agent pools, override this value with your custom agent pool name like AzureAgents.
+  AgentVmImage: '' #To run on hosted-agents, select a hosted image name from https://docs.microsoft.com/en-us/azure/devops/pipelines/agents/hosted?view=azure-devops 
+  
+  #Application Build parameters  
+  ApplicationName: ''
+  BuildScript: ''
+  ProjectFolderPath: ''
+  
+  #Unit Test parameters
+  UnitTestScript: ''
+  UnitTestFileName: ''
+  UnitTestSearchFolder: ''
+  CodeCoverageFileName: ''
+  CodeCoverageFileLocation: ''
+
+  #SonarQube parameters
+  ProjectKey: ''
+  ProjectName: ''
+  Scannedsources: ''
+  ExtraProperties: ''
+
+jobs:
+#1. Build Node Application and Create Artifact
+- job: ${{ parameters.ApplicationName }}NodeBuild
+  pool:
+      name: ${{ parameters.AgentPoolName }} # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+      vmImage: ${{ parameters.AgentVmImage }} 
+  steps:
+  ### Package Dependency Installs
+  - task: Npm@1
+    displayName: 'Installing Node Packages'
+    inputs:    
+      command: 'install'
+      verbose: false
+      workingDir: '${{ parameters.ProjectFolderPath }}'
+
+  - task: Npm@1
+    displayName: 'Building ${{ parameters.ApplicationName }}'
+    inputs:
+      command: custom
+      verbose: false
+      customCommand: '${{ parameters.BuildScript }} --outputPath=$(Build.ArtifactStagingDirectory)/output'
+      workingDir: '${{ parameters.ProjectFolderPath }}'
+
+  ### Archive the files into a zip file for publishing
+  - task: ArchiveFiles@2
+    inputs:
+      rootFolderOrFile: $(Build.ArtifactStagingDirectory)/output
+      archiveType: 'zip'
+      archiveFile: '$(Build.ArtifactStagingDirectory)/output/${{parameters.ApplicationName}}.zip'
+      includeRootFolder: false
+  
+  - task: PublishBuildArtifacts@1
+    displayName: 'Publish React Artifact'
+    inputs:
+      pathtoPublish: '$(Build.ArtifactStagingDirectory)/output/${{parameters.ApplicationName}}.zip'
+      artifactName: ${{ parameters.ApplicationName }}_Package
+
+  ### Run Unit Tests
+  - ${{ if eq(parameters.UnitTestScript, '') }}:
+    - powershell: throw "No Unit Tests executed"
+
+  - ${{ if ne(parameters.UnitTestScript, '') }}:
+    - task: Npm@1
+      displayName: 'Running Unit Tests'
+      inputs:
+        command: custom
+        verbose: false
+        customCommand: '${{ parameters.UnitTestScript }}'
+        workingDir: '${{ parameters.ProjectFolderPath }}'
+  
+  - task: PublishTestResults@2
+    displayName: 'Publish Unit Test Results'
+    inputs:
+      testResultsFiles: '**/${{ parameters.UnitTestFileName }}'
+      searchFolder: '${{ parameters.UnitTestSearchFolder }}'
+      testRunTitle: 'Unit Test Execution'
+
+  - task: PublishCodeCoverageResults@1
+    displayName: 'Publish Code Coverage Result'
+    inputs:
+      codeCoverageTool: Cobertura
+      summaryFileLocation: '${{ parameters.CodeCoverageFileLocation }}/${{ parameters.CodeCoverageFileName }}'
+      failIfCoverageEmpty: true  
+
+#2. Execute Unit and Security Scan Tests
+- job: ${{ parameters.ApplicationName }}NodeQualityAndSecurityBuild
+  variables:
+  - name: SonarQubeNodeExtraProps
+    value: |
+      sonar.verbose=true
+      sonar.log.level=debug               
+      sonar.sources=${{ parameters.Scannedsources }}
+      sonar.exclusions=**/node_modules/**,**/*.spec.ts,**/*mocks/**,**/*mock*/**,**/*mocks*/**,**/*.mock.*/**,**/*.mocks.*/**,**/*test.js,**/*.test.js
+      sonar.tests=${{ parameters.Scannedsources }}
+      sonar.test.inclusions=**/*.spec.ts
+      sonar.typescript.lcov.reportPaths=${{parameters.CodeCoverageFileLocation}}/lcov.info
+      sonar.javascript.lcov.reportPaths=${{parameters.CodeCoverageFileLocation}}/lcov.info
+      sonar.flex.cobertura.reportPaths=${{ parameters.CodeCoverageFileLocation }}/${{ parameters.CodeCoverageFileName }}
+
+  pool:
+      name: ${{ parameters.AgentPoolName }} # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+      vmImage: ${{ parameters.AgentVmImage }}
+  steps:
+  - download: DevOps   # downloads all artifacts from `mypipe`
+    displayName: 'Downloading Shared Artifacts from DevOps Pipeline'
+
+  - download: current  # must include this, since by including a download step, we don't get automatic behavior anymore
+    displayName: 'Downloading Current Prepped Artifacts' 
+ 
+  ## SonarQube:  Builds the Application, Runs the Unit Tests and Publishes SonarScan Results
+  - template:  ../Security/SonarQubeScanNode.yml  # Template reference
+    parameters:
+      UnitTestScript: '${{ parameters.UnitTestScript }}'
+      projectKey: ${{ parameters.projectKey }}
+      projectName: ${{ parameters.projectName }}
+      CodeCoverageFileName: ${{ parameters.CodeCoverageFileName }}
+      CodeCoverageFileLocation:  ${{ parameters.CodeCoverageFileLocation }}
+      ProjectFolderPath: ${{ parameters.ProjectFolderPath }} 
+      Scannedsources: ${{ parameters.Scannedsources }} 
+      ${{ if eq(parameters.ExtraProperties, '') }}: #Supplies the Default path for OpenCover which is used for Code Coverage
+        ExtraProperties: '${{ variables.SonarQubeNodeExtraProps }}' #This is from SharedVariables.yml in the Helpers folder
+      ${{ if ne(parameters.ExtraProperties , '') }}:
+        ExtraProperties: ' ${{ parameters.ExtraProperties }}'
+
+#3. Publish Specific Deployment Resources
+- job: PublishDeploymentResouces
+  dependsOn: ${{ parameters.ApplicationName }}NodeQualityAndSecurityBuild
+  condition: succeeded('${{ parameters.ApplicationName }}NodeQualityAndSecurityBuild')
+  pool:
+      name: ${{ parameters.AgentPoolName }} # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+      # Always use windows latest for just publshing files. This way, we avoid any casting issues
+      vmImage: 'windows-latest'
+  steps:
+  - download: DevOps   # downloads all artifacts from `mypipe`
+    displayName: 'Downloading Shared Artifacts from DevOps Pipeline'
+
+  # New YAML Schema
+  # https://github.com/microsoft/azure-pipelines-yaml/blob/master/design/pipeline-artifacts.md
+  - upload: ./Deployment
+    displayName: 'Uploading Deployment Artifacts'  
+    artifact: DeploymentResources
+  
+  ### Commenting Entire Section. App Ingestion to track application technology usage will be disabled for now. 
+  ### DevSecOps will re-evaluate with EA team whether it's still needed or not.   
+  # - ${{ if eq(parameters.AgentPoolName, 'AzureAgents') }}:
+  #   - task: UseDotNet@2
+  #     displayName: 'Installing .Net Core SDK Version 3.1.x'
+  #     inputs:
+  #       packageType: 'sdk'
+  #       version:  '3.1.x'
+  #       includePreviewVersions: false  
+
+  # #10. Application Info Data Ingestion 
+  # - template:  ../Common/AppIngestion.yml
+  #   parameters:
+  #     ProjectFile: ${{ parameters.ProjectFolderPath }}
+  #     Technology: 'Node'
+  #     Language: 'javascript'
+  #     ApplicationName: ${{ parameters.ApplicationName }}

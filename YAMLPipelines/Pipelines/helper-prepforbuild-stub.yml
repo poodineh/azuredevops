@@ -1,0 +1,16 @@
+#Type - Jobs Template
+#Summary Stub Helper
+#   This is required since NetCore/ContinousIntegration.yml has a dependency on PrepForBuild. 
+
+parameters:
+  AgentVmImage: ''
+
+jobs:  
+- job: PrepForBuild
+  displayName: PrepForBuildStub
+  pool:
+      vmImage: '${{ parameters.AgentVmImage }}'
+  steps:
+  - powershell: |  
+      Write-Host "Build ID: $(Build.BuildNumber)"        
+    displayName: 'PrintBuildID'  

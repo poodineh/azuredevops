@@ -1,0 +1,102 @@
+#Type: Step Yaml Template
+#Summary: 
+#   1. Pulls an image from the untrusted registry
+#   2. Preforms a security scan 
+#   3. Pushes to the trusted registry if pass
+#   4. PreReq 
+#       1. Please use Docker-1-ContainerRegistry.yml in a previous job
+#       2. Important:  Ensure you are using the below for your pool.  $(AqualPoolName) is from the PipelineVariables in ADO 
+#                pool:
+#                  name: '$(AquaPoolName)'
+#   5. KubernetesFolderLocation is optional.  If populated, an artifact will be created for the k8s files under this location in Docker-2-TrustedRegistry.yml
+
+parameters:
+  Dockerimagename: '' #Prefix with your SonarQube team prefix and use all lowercase
+  Dockerimagetag: '' #Optional
+  KubernetesFolderLocation: ''  #Optional. See notes above
+
+steps:
+- powershell: |  
+    Write-Host "Build Parameters:"
+    Write-Host "Docker Image Name - ${{ parameters.Dockerimagename}}"
+    Write-Host "Docker Image Tag - ${{ parameters.Dockerimagetag}}"
+  displayName: 'Print Docker Parameters'
+
+- ${{ if eq(parameters.Dockerimagetag, '') }}:
+  - powershell: |
+      $buildnamesplit = $env:buildname.Split("_")
+      $buildnumber = $buildnamesplit[$buildnamesplit.Length-1]
+      Write-Host "##vso[task.setvariable variable=DockerTag;isOutput=True]$buildnumber"
+    displayName: 'Set Docker Tag Output Variable Using Default'
+    env:
+      buildname: '$(Build.BuildNumber)' # The name of the completed build which is defined above the YAML file
+    name: SetTagVar
+
+- ${{ if ne(parameters.Dockerimagetag, '') }}:
+  - powershell: |
+      Write-Host "##vso[task.setvariable variable=DockerTag;isOutput=True]${{ parameters.Dockerimagetag }}"
+    displayName: 'Set Docker Tag Output Variable Using Parameter'
+    name: SetTagVar
+
+- powershell: |
+    Write-Host "Docker Tag: $(SetTagVar.DockerTag)"
+  displayName: 'PrintDockerTag'
+  name: PrintDockerTag
+
+#2. Create runtime variables
+- powershell: |
+    Write-Host "##vso[task.setvariable variable=ImageUntrusted;isOutput=True]$(ContainerRegistry)/${{ parameters.dockerimagename }}:$(SetTagVar.DockerTag)"
+    Write-Host "##vso[task.setvariable variable=ImageUntrustedLatest;isOutput=True]$(ContainerRegistry)/${{ parameters.dockerimagename }}:latest"
+    Write-Host "##vso[task.setvariable variable=ImageTrusted;isOutput=True]$(TrustedRegistry)/${{ parameters.dockerimagename }}:$(SetTagVar.DockerTag)"
+    Write-Host "##vso[task.setvariable variable=ImageTrustedLatest;isOutput=True]$(TrustedRegistry)/${{ parameters.dockerimagename }}:latest"
+  displayName: 'Set Image Output Variables'
+  name: SetImageVars
+
+### Pull down image to scan from untrusted registry. Note: to be replaced by a 
+### direct registry scan by the aqua task in a pending feature
+- powershell: |
+      docker login -u $(dockeruser) -p $(dockeruser) $(ContainerRegistry) 
+      docker pull "$(SetImageVars.ImageUntrusted)"
+      docker pull "$(SetImageVars.ImageUntrustedLatest)"
+      docker tag "$(SetImageVars.ImageUntrusted)" "$(SetImageVars.ImageTrusted)"
+      docker tag "$(SetImageVars.ImageUntrustedLatest)" "$(SetImageVars.ImageTrustedLatest)"
+  displayName: 'Pull Docker Image for Aqua Scan'
+
+### Aqua scan of local image. Results published in the Aqua console's 'CI/CD' image results
+- task: aquasecScanner@4
+  displayName: 'Scanning Docker Container Image'
+  inputs:
+    image: '$(SetImageVars.ImageTrusted)'
+    connection: 'aqua-console-$(System.TeamProject)'
+    caCertificates: true
+    scanType: local
+    registry: 'acr.azurecr.io'
+    scanMalware: true
+    register: true
+    registerCompliant: true
+    scanner: '$(AquaScanImage)'
+
+### Push scanned image into trusted registry
+- powershell: |
+      docker login -u "$(acrUser)" -p "$(acrKey)" $(TrustedRegistry) 
+      docker push "$(SetImageVars.ImageTrusted)"
+      docker push "$(SetImageVars.ImageTrustedLatest)"
+  displayName: 'Push Aqua Compliant Docker Image to $(TrustedRegistry) Private Container Registry'
+
+### Warning: Once triggered, the team's repository has to contain a Kubernetes folder to be used to deploy a pipeline artifact
+### Create a 'trustedimage.out' file and publish it along with manifest files in the kubernetes folder
+### Note: this is optional and is for team's deploying via kubernetes
+- ${{ if ne(parameters.KubernetesFolderLocation, '') }}:
+  - powershell: |
+        echo $(SetImageVars.ImageTrusted) > $(Build.SourcesDirectory)/${{parameters.KubernetesFolderLocation}}/trustedimage.out
+        ls -la ${{parameters.KubernetesFolderLocation}}
+    displayName: 'Create file with image to deploy'
+  - task: CopyFiles@2
+    displayName: 'Copy Kubernetes deployment artifacts to: $(build.artifactstagingdirectory)'
+    inputs:
+      SourceFolder: ${{parameters.KubernetesFolderLocation}}
+      TargetFolder: $(Build.ArtifactStagingDirectory)
+  - task: PublishPipelineArtifact@1
+    inputs:
+      artifactName: 'Kubernetes' 
+      targetPath: $(Build.ArtifactStagingDirectory)

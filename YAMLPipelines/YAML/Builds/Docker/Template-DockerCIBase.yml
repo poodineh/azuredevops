@@ -1,0 +1,94 @@
+#Summary
+#   1. <Add description for your pipeline here>
+#   2. YAML Reference - https://docs.microsoft.com/en-us/azure/devops/pipelines/yaml-schema?view=azure-devops&tabs=schema%2Cparameter-schema
+#   3. AAG Shared Templates Reference: https://itsals.visualstudio.com/SoftwareTransformation/_git/DevOps?path=%2FYAML%2FBuilds&version=GBmaster&_a=contents
+
+#1. Set Runtime Name
+name: $(Build.DefinitionName)_$(Build.SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
+
+#2. Set Triggers -- This will trigger the pipeline when any changes are pushed to remote branch.  Specify branch name or '*' for all branches
+trigger:
+### Selected branches will depend on the team's branching strategy
+  branches:
+    include:
+    # - develop
+    - master
+  paths:
+    include:
+    - AzureDevOpsReleaseEvents/*
+    - AzureDevOpsReleaseEvents.Tests/*
+    - azure-pipelines-releaseevents-CICD.yml
+
+#3. Specify variables you want to include in your pipeline
+variables: 
+  - group: PipelineVariables
+
+#4. Create Resource References
+resources:
+  #Pipelines
+  pipelines:
+    ### Retrieve Pipeline Shared Resources
+    - pipeline: DevOps
+      project: SoftwareTransformation
+      source: DevOps # Build definition ID. Found under varibles
+  #Remote Repos
+  repositories:
+  - repository: templates  # identifier (A-Z, a-z, 0-9, and underscore)
+    type: git  # see below git - azure devops
+    name: SoftwareTransformation/DevOps  # Teamproject/repositoryname (format depends on `type`)
+    ref: refs/heads/develop # ref name to use, defaults to 'refs/heads/master'
+
+#5. Start CI
+stages:
+#1. PrepForBuild: Perform any actions needed like file transforms and/or dynamic variables creation
+- stage: PrepForBuild
+  jobs:  
+  - job: PrepForBuildJob
+    pool:
+        vmImage: 'ubuntu-latest'
+    steps:
+
+    ##Add any steps needed to prep the build
+      
+    #This step is required
+    - upload: $(Build.SourcesDirectory)
+      ### Do not change this value
+      artifact: Prepped
+      displayName: 'Uploading Prepped Sources'    
+
+#2.ADD Stage for the CI_ArtifactsBuildStage depending on your app type. Pls see other templates.
+
+#3. CI_DockerBuildAndScanStage: Build and push to untrusted and trusted registries
+- stage: CI_DockerBuildAndScanStage 
+  dependsOn: CI_ArtifactsBuildStage #This is the stage performing the application build & tests
+  variables:
+    Dockerimagename: '' #prefix with the same team prefix as SonarQube, use lowercase
+    Dockerapppath: '' #Add folder path
+    KubernetesFolderLocation: '' #Optional. See template notes.
+  
+  jobs:
+  # 1. Build and push to the Untrusted Registry
+  - job: PushToContainerRegistry
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - template: YAML/Builds/Docker/Docker-1-ContainerRegistry.yml@templates 
+      parameters:         
+        Dockerimagename: '$(Dockerimagename)'
+        Dockerapppath: '$(Dockerapppath)'
+        Dockerfile: '$(Dockerapppath)Dockerfile'
+        Dockerbuildargs: '' #Optional
+        Dockerimagetag: '' #Optional
+        KubernetesFolderLocation: '' #Optional. See template notes.
+
+  # 2. Pull from Untrusted Registry, Scan, and push to Trusted registry if pass
+  - job: ScanAndPushToTrustedRegistry
+    dependsOn: 'PushToContainerRegistry'
+    pool:
+      name: '$(AquaPoolName)' #Do not change. This is from the PipelineVariables.
+    steps:
+    - template: YAML/Builds/Docker/Docker-2-TrustedRegistry.yml@templates 
+      parameters:
+        Dockerimagename: '$(Dockerimagename)'
+        Dockerimagetag: '' #Optional
+        KubernetesFolderLocation: '' #Optional. See template notes.

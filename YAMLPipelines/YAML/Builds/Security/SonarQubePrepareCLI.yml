@@ -1,0 +1,23 @@
+#Type: Step Yaml Template
+#Summary: 
+#   1. Triggers the SonarQube Prepare Task using the CLI and must be placed before the build task
+#   2. This task is used for most Non MsBuild (c#) apps like Angular, React, and JavaScript
+#   3. It will not trigger unless both the ProjectKey and ProjectName are populated
+
+parameters:
+  ProjectKey: '' #Project Key
+  ProjectName: '' #Project Name
+  Scannedsources: '' #Path to the root directory containing source files. This value is set to the sonar.sources SonarQube property
+  ExtraProperties: '' #Additional properties to be passed to SonarQube.  See https://docs.sonarqube.org/latest/analysis/analysis-parameters/
+
+steps:
+- task: SonarQubePrepare@4
+  condition: and(succeeded(), ne('${{ parameters.ProjectKey}}', ''), ne('${{ parameters.ProjectName}}', ''))
+  inputs:
+    SonarQube: 'AAGSonarQube'
+    scannerMode: 'CLI'
+    configMode: 'manual'
+    cliProjectKey: '${{parameters.ProjectKey}}'
+    cliProjectName: '${{parameters.ProjectName}}'
+    cliSources: '${{ parameters.Scannedsources }}'
+    extraProperties: '${{ parameters.ExtraProperties }}'

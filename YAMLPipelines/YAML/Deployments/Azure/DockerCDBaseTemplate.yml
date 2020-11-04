@@ -1,0 +1,95 @@
+name: $(Build.DefinitionName)_$(Build.SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
+
+trigger:
+### branch triggers. Commenting out to trigger builds on all branches
+  branches:
+    include:
+    # - develop
+    - master
+  paths:
+    include:
+    - AzureDevOpsReleaseEvents/*
+    - AzureDevOpsReleaseEvents.Tests/*
+    - azure-pipelines-releaseevents-CICD.yml
+
+### Required. This variable group has been pre-created in all ADO Team projects and is used for acr Auth
+variables: 
+  - group: PipelineVariables
+
+resources:
+  ### PRE-REQUISITE: ENSURE THAT THE FOLLOWING REPOSITORY ARTIFACTS ARE REFERENCED FOR SHARED YAML TEMPLATES
+  repositories:
+  - repository: templates  # identifier (A-Z, a-z, 0-9, and underscore)
+    type: git  # see below git - azure devops
+    name: SoftwareTransformation/DevOps  # Teamproject/repositoryname (format depends on `type`)
+    ref: refs/heads/develop # ref name to use, defaults to 'refs/heads/master'
+ 
+stages:
+- stage: CI_ArtifactsBuildStage
+  displayName: CI_ArtifactsBuildStage
+  jobs:
+  ### Do any prep work here such as config transformations that will be used in the CI job.
+  ### If there are no prep work needed.  
+  - job: PrepForBuild
+    pool:
+        name: 'Hosted Windows 2019 with VS2019' # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+    steps:    
+    ### ALWAYS INCLUDE THIS IN THE PREP JOB
+    ### ALL SOURCES DIRECTORY WILL BE UPLOADED IN THE ENTIRE PIPELINE SO IT CAN BE USED REPEATEDLY
+    - upload: $(Build.SourcesDirectory)/Deployment
+      artifact: DeploymentResources
+      displayName: 'Uploading Prepped Sources' 
+
+- stage: CD_Delivery
+  displayName: CD_Delivery
+  dependsOn:
+    - CI_ArtifactsBuildStage  
+  jobs:
+  - deployment: DockerDeployment
+    ### Example of branch conditions
+    condition: eq(variables['Build.SourceBranch'], 'refs/heads/master')
+    dependsOn:
+      - WebAppDeploymentToSourceBranch  
+    pool:
+        name: 'Hosted Windows 2019 with VS2019' # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+    displayName: Prod Container Deployment
+    environment: Prod
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          ### Downloading Pipeline artifacts
+          ### https://github.com/microsoft/azure-pipelines-yaml/blob/master/design/pipeline-artifacts.md
+          - download: current
+            displayName: 'Downloading Pipeline artifacts'
+          
+          ### Shows all pipeline artifacts
+          - script: ls $(Pipeline.Workspace)
+            displayName: 'Shows all pipeline artifacts'
+
+          ### Shows if the ARM templates have been downloaded appropriately
+          - script: ls $(Pipeline.Workspace)/DeploymentResources/Azure          
+            displayName: 'Shows if the ARM templates have been downloaded appropriately'
+
+          ### Creating Azure Resources under the resource group using ARM template from Pipeline Artifacts
+          - task: AzureResourceGroupDeployment@2
+            displayName: 'Azure Deployment:Create Or Update Resource Group action on buildreleaseascode-test-group Resource Group'
+            inputs:
+              azureSubscription: 'buildreleaseascode-test-group-SPN'
+              action: 'Create Or Update Resource Group'
+              resourceGroupName: 'buildreleaseascode-test-group'
+              location: 'West US 2'
+              csmFile: '$(Pipeline.Workspace)/DeploymentResources/Azure/WebApiLinux.json'
+              csmParametersFile: '$(Pipeline.Workspace)/DeploymentResources/Azure/WebApiLinux.parameters.json'
+              overrideParameters: '-applicationName RelEventApi -environment prod -productName RelEventApi -state Live -skuName S1 -numberOfWorkers 1 -location westus2'
+          
+          - task: AzureRmWebAppDeployment@4
+            displayName: 'Azure App Service Deploy: Release Events Api'
+            inputs:
+              azureSubscription: 'buildreleaseascode-test-group-SPN'
+              appType: webAppContainer
+              WebAppName: releventapi-prod-site-westus2
+              DockerNamespace: acr.azurecr.io
+              DockerRepository: releaseeventsapilinux-master
+              DockerImageTag: latest
+              AppSettings: -DOCKER_REGISTRY_SERVER_URL https://acr.azurecr.io -DOCKER_REGISTRY_SERVER_USERNAME $(acrUser) -DOCKER_REGISTRY_SERVER_PASSWORD $(acrKey)

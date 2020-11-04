@@ -1,0 +1,149 @@
+#Type - Test Pipeline
+#Summary
+#   1. Test template that performs CI & Docker for a NetCore API & UI app
+#   2. Source is Applications/NetCoreDocker
+#   3. Tests
+#       1. YAML/Builds/NetCore/ContinuousIntegration.yml & related templates
+#       2. YAML/Builds/Docker/ContinuousIntegration.yml & related templates
+
+name: $(Build.DefinitionName)_$(Build.SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
+
+###trigger: none   #disable triggers
+trigger:
+ branches:
+   include:
+   - develop
+   - master
+   - feature/*
+ paths:
+   include:
+    - /Applications/NetCoreDocker/*
+    - YAML/Builds/Security/*
+    - YAML/Builds/NetCore/*
+    - Pipelines/azure-pipelines-regr-docker-ci.yml
+
+variables: 
+  - group: PipelineVariables
+
+resources:
+  pipelines:
+  ### PRE-REQUISITE: ENSURE THAT THE FOLLOWING PIPELINE ARTIFACTS ARE REFERENCED
+  - pipeline: DevOps
+    project: SoftwareTransformation
+    source: DevOps # Build definition ID. Found under variables
+    branch: 'refs/heads/master'
+  
+stages:
+
+- stage: PrepForBuild
+  jobs:  
+  - job: PrepForBuildJob
+    pool:
+        name: 'Hosted Windows 2019 with VS2019' # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+    steps:
+    - powershell: |  
+        Write-Host "Build ID: $(Build.BuildNumber)"        
+      displayName: 'CI Start for Both UI and API'
+      
+    - upload: $(Build.SourcesDirectory)
+      ### Do not change this value
+      artifact: Prepped
+      displayName: 'Uploading Prepped Sources'    
+
+- stage: DockerBuildStage 
+  dependsOn: PrepForBuild #This is the stage performing the application build & tests
+  jobs:
+  #1. API
+  - job: API_PushToContainerRegistry
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - template: ../YAML/Builds/Docker/Docker-1-ContainerRegistry.yml
+      parameters:         
+        Dockerimagename: 'devops-st-templates-pipelinetest'
+        Dockerapppath: '$(Pipeline.Workspace)/Prepped/Applications/NetCoreDocker/API'
+        Dockerfile: '$(Pipeline.Workspace)/Prepped/Applications/NetCoreDocker/API/DockerFile'
+        Dockerbuildargs: '' #Optional
+        Dockerimagetag: '' #Optional
+        KubernetesFolderLocation: 'kubernetes'
+
+  - job: API_PushTrustedRegistry
+    dependsOn: API_PushToContainerRegistry
+    pool:
+      name: '$(AquaPoolName)'
+    steps:
+    - template: ../YAML/Builds/Docker/Docker-2-TrustedRegistry.yml
+      parameters:         
+        Dockerimagename: 'devops-st-templates-pipelinetest'
+        Dockerimagetag: '' #Optional
+
+  #2. UI
+  - job: UI_PushToContainerRegistry
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - template: ../YAML/Builds/Docker/Docker-1-ContainerRegistry.yml
+      parameters:         
+        Dockerimagename: 'devops-netcoreuiregressioncistagedockertestcasing'
+        Dockerapppath: '$(Pipeline.Workspace)/Prepped/Applications/NetCoreDocker/UI'
+        Dockerfile: '$(Pipeline.Workspace)/Prepped/Applications/NetCoreDocker/UI/DockerFile'
+        Dockerbuildargs: '' #Optional
+        Dockerimagetag: '' #Optional
+        KubernetesFolderLocation: 'kubernetes'
+
+
+###Deprecated Tests - CI_StageDocker.yml
+
+
+# #Test 1: Create Image Using Default Name - Push to Untrusted Only
+# - template: ../YAML/Builds/Docker/CI_StageDocker.yml
+#   parameters:
+#     Name: "NetCoreWebApiCiStageDockerDefaultName"
+#     Dockerimagename: 'netcoreapiregressioncistagedockerdefaultname'
+#     Dockerapppath: ' $(Pipeline.Workspace)/Prepped/Applications/NetCoreDocker/API'
+#     Dockerfile: ' $(Pipeline.Workspace)/Prepped/Applications/NetCoreDocker/API/DockerFile'
+#     Dockerimagescan: 'false'
+#     StageName: 'CI_StageDockerAPI'
+#     DependsOnStage: 'PrepForBuild'
+
+# #Test 2: Create Image using mixed casing params in template - Push to Untrusted Only
+# - template: ../YAML/Builds/Docker/CI_StageDocker.yml
+#   parameters:
+#     Name: "NetCoreUICiStageDockerTestCasing"
+#     dockerimagename: 'netcoreuiregressioncistagedockertestcasing'
+#     DoCkerapppath: ' $(Pipeline.Workspace)/Prepped/Applications/NetCoreDocker/UI'
+#     dockerFile: ' $(Pipeline.Workspace)/Prepped/Applications/NetCoreDocker/UI/DockerFile'
+#     DockerIMagescan: 'false'
+#     StageName: 'CI_StageDockerUI'
+#     dEpendsOnStage: 'PrepForBuild'
+
+###Deprecated Tests
+###Updated this to run both CI Jobs in a single stage
+
+# - stage: CI_DockerBuildStage_API
+#   displayName: CI_DockerBuildStage_API
+#   dependsOn:
+#     - StageStartApiAndUI    
+#   jobs:
+#   - template: ../YAML/Builds/Docker/ContinousIntegration.yml
+#     parameters:
+#       AgentPoolName: 'Hosted Ubuntu 1604'
+#       Name: "NetCoreWebApi"
+#       dockerimagename: 'netcoreapiregression'
+#       dockerapppath: ' $(Pipeline.Workspace)/Prepped/Applications/NetCoreDocker/API'
+#       dockerfile: ' $(Pipeline.Workspace)/Prepped/Applications/NetCoreDocker/API/DockerFile'
+#       dockerimagescan: 'false'
+
+# - stage: CI_DockerBuildStage_UI
+#   displayName: CI_DockerBuildStage_UI
+#   dependsOn:
+#     - StageStartApiAndUI    
+#   jobs:  
+#   - template: ../YAML/Builds/Docker/ContinousIntegration.yml
+#     parameters:
+#       AgentPoolName: 'Hosted Ubuntu 1604'
+#       Name: "NetCoreUI"
+#       dockerimagename: 'netcoreuiregression'
+#       dockerapppath: ' $(Pipeline.Workspace)/Prepped/Applications/NetCoreDocker/UI'
+#       dockerfile: ' $(Pipeline.Workspace)/Prepped/Applications/NetCoreDocker/UI/DockerFile'
+#       dockerimagescan: 'false'

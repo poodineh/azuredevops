@@ -1,0 +1,23 @@
+#Type: Step Yaml Template
+#Summary: 
+#   1. Contains the VSTest task
+
+parameters:
+  TestProjectFileLocation: ''
+  RunSettingsFileLocation: ''
+  RunSettingsOverrideParameters: ''
+  TestCategories: ''
+  BuildConfiguration: ''
+
+steps:
+- task: VSTest@2
+  displayName: 'FXT-Run Unit Tests'
+  inputs:
+    testAssemblyVer2: '${{ parameters.TestProjectFileLocation }}'
+    testFiltercriteria: '${{ parameters.TestCategories }}'
+    overrideTestrunParameters: '${{ parameters.RunSettingsOverrideParameters }}'
+    runSettingsFile: '${{ parameters.RunSettingsFileLocation }}'
+    codeCoverageEnabled: true
+    platform: 'any cpu'
+    configuration: '${{ parameters.BuildConfiguration }}'
+    diagnosticsEnabled: True

@@ -1,0 +1,105 @@
+#Summary
+#   1. <Add description for your pipeline here>
+#   2. YAML Reference - https://docs.microsoft.com/en-us/azure/devops/pipelines/yaml-schema?view=azure-devops&tabs=schema%2Cparameter-schema
+#   3. AAG Shared Templates Reference: https://itsals.visualstudio.com/SoftwareTransformation/_git/DevOps?path=%2FYAML%2FBuilds&version=GBmaster&_a=contents
+
+#1. Set Runtime Name
+name: $(Build.DefinitionName)_$(Build.SourceBranchName)_$(Date:yyyyMMddHHmm)$(Rev:.r)
+
+#2. Set Triggers -- This will trigger the pipeline when any changes are pushed to remote branch.  Specify branch name or '*' for all branches
+trigger:
+# branch triggers. Commenting out to trigger builds on all branches
+  branches:
+    include:
+    - master
+    - develop
+    - feature*
+  ### Specify the relative paths you want to include for your triggers
+  # paths:
+  #   include:
+  #   - AzureDevOpsReleaseEvents/*
+
+#3. Specify variables you want to include in your pipeline
+variables: 
+  - group: PipelineVariables
+
+#4. Create Resource References
+resources:
+  pipelines:
+  ### Retrieve Pipeline Shared Resources
+  ### Do Not Remove. Needed for downloading code coverage files
+  - pipeline: DevOps
+    project: SoftwareTransformation
+    source: DevOps # Build definition ID. Found under varibles
+    
+  ### Retrieve Pipeline Shared Resources
+  ### Do Not Remove. Needed for referencing shared templates
+  repositories:
+  - repository: templates  # identifier (A-Z, a-z, 0-9, and underscore)
+    type: git  # see below git - azure devops
+    name: SoftwareTransformation/DevOps  # Teamproject/repositoryname (format depends on `type`)
+    ref: refs/heads/master # ref name to use, defaults to 'refs/heads/master'
+
+#5. Start CI
+stages:
+#Stage 1 - Perform any prep work here such as config transformations that will be used in the CI job.
+- stage: CI_PrepForBuildStage
+  jobs:
+  - job: PrepForBuild
+    pool:
+        vmImage: 'windows-latest'
+    steps:           
+    ### ALWAYS INCLUDE THIS IN THE PREP JOB
+    ### ALL SOURCES DIRECTORY WILL BE UPLOADED IN THE ENTIRE PIPELINE SO IT CAN BE USED REPEATEDLY
+    - upload: $(Build.SourcesDirectory)
+      ### Do not change this value
+      artifact: Prepped
+      displayName: 'Uploading Prepped Sources' 
+
+#Stage 2: Build, Test, and Publish the App
+- stage: CI_ArtifactsBuildStage
+  dependsOn: 'CI_PrepForBuildStage'
+  jobs:
+    ### Uses CI Shared Templates under https://itsals.visualstudio.com/SoftwareTransformation/_git/DevOps    
+  - template: YAML/Builds/NetCore/ContinousIntegration.yml@templates  # Template reference
+    parameters:
+      #Agent Pools parameters
+      ### AgentVmImage valid Values: https://docs.microsoft.com/en-us/azure/devops/pipelines/agents/hosted?view=azure-devops    
+      AgentVmImage: 'windows-latest' 
+      #AgentPoolName: 'OnPremAgents' # - Use this node instead of AgentVmImage if the pipeline is run on self hosted agents
+
+      # Application Build parameters   
+      ### <Your application name>
+      ApplicationName: 'AddYourAppName'
+      ### <Debug or Release>
+      BuildConfiguration: 'Release'
+      ### <Optional: if a specific NetFx version is required>
+      NetFxVersion: ''
+      ###Solution file path
+      SonarScanSolutionFile: './SonarScan.sln' 
+      ### <Optional parameter for specifying a custom nuget file used in the restore step>
+      PathToNugetConfig: ''
+      ### <true to publish the artifact>
+      PublishArtifacts: 'true'
+      ### <Optional: Add path to create an additional artifact containing deployment resources. This is not required since the files are already in the Prepped artifact>
+      DeploymentResourcesPublishPath: ''
+
+      # Pipeline parameters
+      ### <Optional parameter specifying if Pipeline stage contains a prep for build job.>
+      ContainsPrepForBuildJob: 'false'
+    
+	    ### Unit Test parameters
+      ### <Path to your test project file>
+      TestProjectFileLocation: './AzureDevOpsReleaseEvents.Tests/AzureDevOpsReleaseEvents.Tests.csproj'
+      ###<Optional parameter. If left blank, it will use the default pipeline runsettings file>
+      RunSettingsFileLocation: ''
+      ### <Optional parameter. Add test categories to filter tests>
+      TestCategories: ''   
+      
+      # Sonar parameters -  Contact the DevSecOps team for any Sonar related questions
+      ###<Required parameter. Sonar Project Key>
+      ProjectKey: 'ea-releaseapi'
+      ### <Required parameter. Sonar Project Name>
+      ProjectName: 'ea-releaseapi'
+      ###<Optional parameter. Custom Sonar properties to be added to the Sonar Prepare step>
+      ExtraProperties: ''

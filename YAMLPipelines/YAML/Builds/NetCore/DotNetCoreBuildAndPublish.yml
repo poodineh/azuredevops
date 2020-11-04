@@ -1,0 +1,102 @@
+#Type: Step Yaml Template
+#Summary: 
+#   1. Restores, Builds, and Publishes the Project Artifact
+parameters:
+  Name: ''
+  AgentPoolName: ''
+  AgentVmImage: ''
+  BuildConfiguration: ''
+  ProjectFile: '' 
+  PublishArtifacts: ''
+  NetCoreSDKVersion: ''
+  PathToNugetConfig: ''
+  SelfContained: ''
+  # Example of Condition Checks
+  # RestoreAsInternalFeed: ''
+
+steps:
+
+- powershell: |  
+    Write-Host "Build Parameters(CORE):"
+    Write-Host "Name - ${{ parameters.Name}}"
+    Write-Host "AgentPoolName - ${{ parameters.AgentPoolName}}"
+    Write-Host "AgentVmImage - ${{ parameters.AgentVmImage}}"
+    Write-Host "BuildConfiguration - ${{ parameters.BuildConfiguration}}"
+    Write-Host "ProjectFile - ${{ parameters.ProjectFile}}"
+    Write-Host "PublishArtifacts - ${{ parameters.PublishArtifacts}}"
+    Write-Host "NetCoreSDKVersion - ${{ parameters.NetCoreSDKVersion}}"
+    Write-Host "PathToNugetConfig - ${{ parameters.PathToNugetConfig}}"
+  displayName: 'BP-Print BuildAndPublish Parameters'
+
+- ${{ if ne(parameters.NetCoreSDKVersion, '') }}:
+  - task: UseDotNet@2
+    displayName: 'BP-Installing .Net Core SDK Version ${{ parameters.NetCoreSDKVersion}}'
+    inputs:
+      packageType: 'sdk'
+      version:  ${{ parameters.NetCoreSDKVersion}}
+      includePreviewVersions: true
+
+- ${{ if eq(parameters.PathToNugetConfig, '') }}:
+  - task: DotNetCoreCLI@2
+    displayName: 'BP-Restoring DotNet Core Project ${{ parameters.Name}}'
+    inputs:
+      command: restore
+      projects: ${{ parameters.ProjectFile}}
+      # Also include ASInternal Private NugetFeed
+      vstsFeed: 'c005f067-8dd6-49a9-a11f-6ac99ea93a22'
+
+- ${{ if ne(parameters.PathToNugetConfig, '') }}:
+  - task: DotNetCoreCLI@2
+    displayName: 'BP-Restoring DotNet Core Project ${{ parameters.Name}} With Custom Nuget.config File'
+    inputs:
+      command: restore
+      projects: ${{ parameters.ProjectFile}}
+      feedsToUse: config
+      nugetConfigPath: ${{ parameters.PathToNugetConfig}}
+     
+- task: DotNetCoreCLI@2
+  displayName: 'BP-Building DotNet Core Project ${{ parameters.Name}}'
+  inputs:
+    projects: ${{ parameters.ProjectFile}}
+    arguments: '--configuration ${{ parameters.BuildConfiguration }}'
+
+## Dotnet PublishArtifacts only
+- script: dotnet publish ${{ parameters.ProjectFile}} --configuration ${{ parameters.BuildConfiguration }} --output $(Agent.TempDirectory)/output 
+  displayName: 'BP-Build using Publish Bits on ${{ parameters.Name}}'
+  
+## ArchiveArtifacts Separate zip task because of MS ADO Task Regressions
+- task: ArchiveFiles@2
+  displayName: 'BP-Zipping  ${{ parameters.Name}} Artifacts'
+  inputs:
+    rootFolderOrFile: '$(Agent.TempDirectory)/output'
+    includeRootFolder: false
+    archiveType: 'zip'
+    archiveFile: '$(Agent.TempDirectory)/zipped/${{ parameters.Name}}.zip'
+    replaceExistingArchive: false
+    verbose: true
+
+## Publishing actual application published bits
+- task: PublishBuildArtifacts@1
+  displayName: 'BP-Uploading  ${{ parameters.Name}} Artifacts'
+  inputs:
+    PathtoPublish: '$(Agent.TempDirectory)/zipped'
+    ArtifactName: ${{ parameters.name }}_Package
+  condition: succeededOrFailed()
+
+## Publish bits passed parameters SelfContained
+- ${{ if eq(parameters.SelfContained, 'true') }}:
+  - task: DotNetCoreCLI@2
+    displayName: 'BP-Build using Publish Bits and SelfContained on ${{ parameters.Name}}'
+    inputs:
+      command: publish
+      publishWebProjects: false
+      projects: ${{ parameters.ProjectFile}}
+      arguments: '--configuration ${{ parameters.BuildConfiguration }} --output $(build.artifactstagingdirectory) -r win-x86 --self-contained true'
+      zipAfterPublish: True
+      
+  - task: PublishBuildArtifacts@1
+    displayName: 'BP-Uploading  ${{ parameters.Name}} Self-Contained Artifacts'
+    inputs:
+      PathtoPublish: '$(build.artifactstagingdirectory)'
+      ArtifactName: ${{ parameters.name }}_Package
+    condition: succeededOrFailed()

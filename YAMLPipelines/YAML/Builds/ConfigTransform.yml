@@ -1,0 +1,12 @@
+parameters:
+  SourcePath: ''
+  Transformations: '' 
+
+steps:
+# Transform the config file so it gets the encrypted value from ADO
+- task: sergeyzwezdin.magic-chunks.magic.chunks.MagicChunks@2
+  displayName: 'Config transform - ${{ parameters.SourcePath}}'
+  inputs:
+    sourcePath: ${{ parameters.SourcePath}}
+    transformations: ${{ parameters.Transformations}}
+  

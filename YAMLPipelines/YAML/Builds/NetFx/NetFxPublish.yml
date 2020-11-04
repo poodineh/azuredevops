@@ -1,0 +1,26 @@
+#Type: Step Yaml Template
+#Summary: 
+#   1. Contains the publish task used for NetFx apps
+#   2. Does not trigger if PublishArtifacts is not true and DeploymentPublishPath is empty
+
+parameters:
+  ArtifactName: ''
+  PublishArtifacts: ''
+  DeploymentPublishPath: ''
+
+steps:
+  #Print Publish Parameters
+- powershell: |  
+    Write-Host "Publish Parameters:"
+    Write-Host "PublishArtifacts - ${{ parameters.PublishArtifacts}}"
+    Write-Host "DeploymentPublishPath - ${{ parameters.DeploymentPublishPath}}"
+    Write-Host "ArtifactName - ${{ parameters.ArtifactName}}"
+  displayName: 'FXP-Print FX Publish Parameters'
+
+#Publish DeploymentResources if DeploymentResourcesPublishPath == true
+- task: PublishBuildArtifacts@1
+  displayName: 'FXP-Publish Deployment Resources'
+  condition: and(succeeded(), eq('${{ parameters.PublishArtifacts }}', 'true'), ne('${{ parameters.DeploymentPublishPath }}', ''))
+  inputs:
+    PathtoPublish: '${{ parameters.DeploymentPublishPath }}'
+    ArtifactName: ${{ parameters.ArtifactName }}   

@@ -1,0 +1,91 @@
+### Azure Python Function Release: Resource Deployment Template ###
+
+# This template is used for deploying (releasing) only the resources for the Azure Python Functions using YAML. The same template can be used for all environments. Using the artifacts, this template deploys the azure resources to the environment and starts the app service. It takes the following input parameters:
+
+#   EnvironmentName: name of environment
+#   AgentPoolName: Windows Agent pool name 
+#   BuildConfiguration: build or release
+#   functionAppFullName: name of function app including environment and location - e.g. flight-aagops-qa-func-westus2
+#   ArmTemplateName: name of arm template json file
+#   ArmTemplateParameterName: name of arm template config json file
+#   azureSubscription: name of subscription - e.g. flight-qa-group-SPN
+#   resourceGroupName: name of resource group - e.g. flight-qa-group
+#   location: Azure location to deploy to - e.g. West US 2
+#   boolStartAppService: true or false - start app service if deploying function app
+
+###
+###  ASSUMPTIONS:
+###   parameters.resourceFolderPath contains arm templates 
+###   folderpaths end in /
+###
+
+
+parameters:
+  ### Deployment Parameters
+  EnvironmentName: ''
+  AgentPoolName: ''
+  BuildConfiguration: ''
+  functionAppFullName: ''
+  ArmTemplateName: ''
+  ArmTemplateParameterName: ''
+  azureSubscription: ''
+  resourceGroupName: ''
+  location: ''
+  boolStartAppService: ''
+
+jobs:
+  # Prep job
+  - job: Prep
+    pool:
+      name: ${{ parameters.AgentPoolName }}  # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+    displayName: 'Print BuildAndPublish Parameters'
+    steps:
+    # Print Params
+    - powershell: |  
+        Write-Host "Build Parameters:"
+        Write-Host "EnvironmentName - ${{ parameters.EnvironmentName}}"
+        Write-Host "AgentPoolName - ${{ parameters.AgentPoolName}}"
+        Write-Host "BuildConfiguration - ${{ parameters.BuildConfiguration}}"
+        Write-Host "functionAppFullName - ${{ parameters.functionAppFullName }}"
+        Write-Host "ArmTemplateName - ${{ parameters.ArmTemplateName}}"
+        Write-Host "ArmTemplateParameterName - ${{ parameters.ArmTemplateParameterName}}"
+        Write-Host "azureSubscription - ${{ parameters.azureSubscription}}"
+        Write-Host "resourceGroupName - ${{ parameters.resourceGroupName}}"
+        Write-Host "location - ${{ parameters.location}}"
+      displayName: 'Print BuildAndPublish Parameters'
+    
+  # Deploy resources job
+  - deployment: ResourceDeploymentTo${{ parameters.EnvironmentName }} 
+    variables:
+      BuildConfiguration: '${{ parameters.BuildConfiguration }}'
+    pool:
+        name: ${{ parameters.AgentPoolName }}  # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+    displayName: Azure App Service Resource Deployment
+    environment:  ${{ parameters.EnvironmentName }} 
+        
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          # Show pipeline artifact folders
+          - script: dir $(Pipeline.Workspace)
+            displayName: 'Shows all pipeline artifacts'
+
+          # Create Azure Resources
+          - task: AzureResourceGroupDeployment@2
+            displayName: 'Provision Azure Resources in ${{ parameters.resourceGroupName }}'
+            inputs:
+              azureSubscription: '${{ parameters.azureSubscription }}'
+              action: 'Create Or Update Resource Group'
+              resourceGroupName: '${{ parameters.resourceGroupName }}'
+              location: '${{ parameters.location }}'
+              csmFile: '$(Pipeline.Workspace)/resources/Templates/${{ parameters.ArmTemplateName }}'
+              csmParametersFile: '$(Pipeline.Workspace)/resources/Templates/${{ parameters.ArmTemplateParameterName }}'
+
+          # Start the app services
+          - ${{ if eq(parameters.boolStartAppService, 'true') }}:
+            - task: AzureAppServiceManage@0
+                inputs:
+                azureSubscription: '${{ parameters.azureSubscription }}'
+                Action: 'Start Azure App Service'
+                WebAppName:  '${{ parameters.functionAppFullName }}'

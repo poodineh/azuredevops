@@ -1,0 +1,54 @@
+### Databricks resource and notebook Build and Artifact Deployment Template ###
+# Nothing to build for Databricks resources, so this is just artifact upload 
+
+# This template is used for uploading artifacts for Databricks resource and component deployments. There is nothing to build, so this template merely publishes the files/artifacts. No need for PullRequest pipeline. Use this in the CICD pipeline and set boolPublishArtifacts to true. It takes the following input parameters:
+
+### Deployment Parameters - definitions
+#   AgentPoolName: Agent pool name
+#   BuildConfiguration: debug or build or release
+#   resourceFolderPath: resource scripts subfolder path (from root of repo)
+#   databricksResourceFolderPath: databricks script and notebook files subfolder path (from root of repo)
+#   boolPublishArtifacts: true or false - publish artifacts to be deployed, set to false if used in a pull request, set to true if used in a CD (Continuous Delivery) pipeline
+
+
+parameters:
+  ### Deployment Parameters - set defaults
+  AgentPoolName: ''
+  BuildConfiguration: ''
+  resourceFolderPath: ''
+  databricksResourceFolderPath: ''
+  boolPublishArtifacts: ''
+
+jobs: 
+- job: PublishArtifacts
+  pool:
+    name: ${{ parameters.AgentPoolName }} # Valid Values: 'AzureAgents', 'Azure Pipelines', 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+  variables:
+    BuildConfiguration: ${{ parameters.BuildConfiguration}}"
+
+  steps:
+
+  - powershell: |  
+      Write-Host "Parameters:"
+      Write-Host "AgentPoolName - ${{ parameters.AgentPoolName}}"
+      Write-Host "BuildConfiguration - ${{ parameters.BuildConfiguration}}"
+      Write-Host "resourceFolderPath - ${{ parameters.resourceFolderPath}}"
+      Write-Host "databricksResourceFolderPath - ${{ parameters.databricksResourceFolderPath}}"
+      Write-Host "boolPublishArtifacts - ${{ parameters.boolPublishArtifacts}}"
+    displayName: 'Print Publish Parameters'
+
+
+  ## Publish only if requested
+  - ${{ if eq(parameters.boolPublishArtifacts, 'true') }}:
+      
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact: Resources'
+      inputs:
+        PathtoPublish: ${{ parameters.resourceFolderPath}}
+        ArtifactName: resources
+      
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact: Databricks Resources'
+      inputs:
+        PathtoPublish: ${{ parameters.databricksResourceFolderPath}}
+        ArtifactName: databricks

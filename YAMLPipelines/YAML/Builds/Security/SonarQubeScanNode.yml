@@ -1,0 +1,44 @@
+parameters:
+  # Application Build Process   
+  UnitTestScript: ''
+  ProjectKey: ''
+  ProjectName: ''
+  CodeCoverageFileName: ''
+  CodeCoverageFileLocation: ''
+  ProjectFolderPath: ''
+  Scannedsources: ''
+  ExtraProperties: ''
+  
+steps:
+### Package Dependency Installs
+- task: Npm@1  
+  displayName: 'Installing Node Packages'
+  inputs:
+    command: 'install'
+    verbose: false
+    workingDir: '${{ parameters.ProjectFolderPath }}'
+
+- template: SonarQubePrepareCLI.yml  # Template reference
+  parameters:
+    ProjectKey: '${{ parameters.ProjectKey }}' #Project Key
+    ProjectName: '${{ parameters.ProjectName }}' #Project Name
+    Scannedsources: '${{ parameters.Scannedsources }}' #Path to the root directory containing source files. This value is set to the sonar.sources SonarQube property
+    ExtraProperties: '${{ parameters.ExtraProperties }}' #Extra Props
+
+### Run Unit Tests
+- ${{ if eq(parameters.UnitTestScript, '') }}:
+  - powershell: throw "No Unit Tests executed"
+
+- ${{ if ne(parameters.UnitTestScript, '') }}:
+  - task: Npm@1
+    displayName: 'Running Unit Tests'
+    inputs:
+      command: custom
+      verbose: false
+      customCommand: '${{ parameters.UnitTestScript }}'
+      workingDir: '${{ parameters.ProjectFolderPath }}'
+
+- template: SonarQubeAnalyzeAndPublish.yml  # Template reference
+  parameters:
+    ProjectKey: '${{ parameters.ProjectKey }}' #Project Key
+    ProjectName: '${{ parameters.ProjectName }}' #Project Name

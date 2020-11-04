@@ -1,0 +1,50 @@
+#Type: Step Yaml Template
+#Summary: 
+#   1. Contains the restore and build tasks used for NetFx apps
+#   2. Restore can be performed using either the ASInternal nuget feed or a custom nuget file. 
+#      To use a custom nuget file, add the file path to PathToNugetConfig
+
+parameters:
+  BuildConfiguration: ''
+  MsbuildArgs: ''
+  SonarScanSolutionFile: '' 
+  PathToNugetConfig: ''
+  NetFxVersion: ''
+
+steps:
+  #Print Publish Parameters
+- powershell: |  
+    Write-Host "Build Parameters:"
+    Write-Host "BuildConfiguration - ${{ parameters.BuildConfiguration}}"
+    Write-Host "MsbuildArgs - ${{ parameters.MsbuildArgs}}"
+    Write-Host "SonarScanSolutionFile - ${{ parameters.SonarScanSolutionFile}}"
+    Write-Host "PathToNugetConfig - ${{ parameters.PathToNugetConfig}}"
+    Write-Host "NetFxVersion - ${{ parameters.NetFxVersion}}"
+  displayName: 'FXB-Print FX Build Parameters'
+
+#Use if PathToNugetConfig is empty
+- task: NuGetCommand@2
+  displayName: 'FXB-NuGet restore - Feed'
+  condition: and(succeeded(), eq('${{ parameters.PathToNugetConfig }}', ''))
+  inputs:
+    restoreSolution: ${{ parameters.SonarScanSolutionFile }}
+    vstsFeed: 'c005f067-8dd6-49a9-a11f-6ac99ea93a22'
+ 
+ #Use if PathToNugetConfig is NOT empty
+- task: NuGetCommand@2
+  displayName: 'FXB-NuGet restore - NugetConfig'
+  condition: and(succeeded(), ne('${{ parameters.PathToNugetConfig }}', ''))
+  inputs:
+    restoreSolution: ${{ parameters.SonarScanSolutionFile }}
+    feedsToUse: config
+    nugetConfigPath: '${{ parameters.PathToNugetConfig }}'
+
+- task: VSBuild@1
+  displayName: 'FXB-Build solution'
+  inputs:
+    solution: '${{ parameters.SonarScanSolutionFile }}'
+    msbuildArgs: '${{ parameters.MsbuildArgs }}'
+    platform: 'any cpu'
+    configuration: '${{ parameters.BuildConfiguration }}'
+    vsVersion: '${{ parameters.NetFxVersion}}'
+    clean: true

@@ -1,0 +1,42 @@
+parameters:
+  Name: ''
+  invokingAppId: ''
+  invokingWebHookRequest: ''
+   
+steps:
+# Shows all pipeline artifacts
+- powershell: ls $(Pipeline.Workspace)
+  displayName: 'Shows all Prepped Pipeline Artifacts'
+
+- powershell: |  
+    Write-Host "Build Parameters:"
+    Write-Host "Name - ${{ parameters.Name}}"
+    Write-Host "Invoking user - ${{ parameters.invokingAppId}}"
+    Write-Host "Invoking request - ${{ parameters.invokingWebHookRequest}}"
+  displayName: 'Print Parameters'
+
+###- ${{ if eq(parameters.invokingAppId, '') }}:
+###  - powershell: |
+###        docker build --no-cache -f ${{ parameters.dockerfile }} -t $(DockerImageEndpoint) -t $(DockerImageEndpointLatest) ${{ parameters.dockerapppath }}
+###    displayName: 'Building Docker Image Without Arguments'      
+
+### Execute command
+- powershell: |
+    $name=$env:SYSTEM_TEAMPROJECTID
+    Write-Host "Parm Name - $name "
+    $header = @{invokinguser=$name}
+    foreach ($key in $header.Keys) 
+    { 
+        "H1 Value for key '$($key)': $($header.$key)" 
+    }    
+
+    Write-Host "Parameters - ${{ parameters.invokingAppId}} " 
+    $header2 = @{invokinguser=${{ parameters.invokingAppId}} }
+    foreach ($key in $header2.Keys) 
+    { 
+        "H2 Value for key '$($key)': $($header2.$key)" 
+    }   
+
+    Write-Host 'Invoke-RestMethod -Method Post -Uri ${{ parameters.invokingWebHookRequest }}  -Headers $header'
+  displayName: 'Invoke Database Refresh Process'
+ 

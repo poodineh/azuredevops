@@ -1,0 +1,162 @@
+#Type: Job Yaml Template
+#Summary: 
+#   1. Performs a build, test, and publish for NetFx apps. Only contains 1 job
+#   2. This template should be used for Web Deploy, not MSI deployment
+#   3. SonarQube is executed only if ProjectKey and ProjectName nodes have values
+#   4. PrepForBuild can be performed inside the same stage or in a separate preceding stage by using the ContainsPrepForBuildJob parameter
+#       1. If inside the same stage, leave ContainsPrepForBuildJob empty. The name must be PrepForBuild
+#       2. If in a separate preceding stage, set ContainsPrepForBuildJob to false
+
+parameters:
+  #Agent Pools parameters
+  AgentPoolName: 'Azure Pipelines'  #Default value is configured when using AgentVmImage
+  AgentVmImage: ''  #Only specify value when using VMImages
+  
+  #Application Build parameters  
+  ApplicationName: ''
+  BuildConfiguration: ''
+  NetFxVersion: ''
+  #Default Values for Web Deploy. Adding here so it can be overridden by triggering yaml
+  MsbuildArgs: '/p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true /p:PackageLocation="$(build.artifactstagingdirectory)"'
+  SonarScanSolutionFile: '' 
+  ProjectFileLocation: ''  
+  PathToNugetConfig: ''
+  PublishArtifacts: ''
+  DeploymentResourcesPublishPath: ''
+
+  #Pipeline parameters
+  ContainsPrepForBuildJob: '' # False -- if PrepForBuild is NOT in the same stage as the App Build
+                              # Leave Empty or set to true -- if PrepForBuild is in the same stage as the App Build
+
+  # Unit Test parameters
+  TestProjectFileLocation: ''
+  RunSettingsFileLocation: ''
+  RunSettingsOverrideParameters: ''
+  TestCategories: ''
+  
+  # SonarQube parameters
+  # Not Triggered unless both have values. See comments in SonarQubePrepareMsBuild.yml for node descriptions
+  ProjectKey: ''
+  ProjectName: ''
+  ExtraProperties: ''
+
+jobs: 
+- job: CI_WebDeploy_${{ parameters.ApplicationName }}
+  ${{ if ne(parameters.ContainsPrepForBuildJob, 'false') }}:
+    dependsOn: 'PrepForBuild'
+    condition: succeeded('PrepForBuild')
+  pool:
+      name: ${{ parameters.AgentPoolName }}
+      vmImage: ${{ parameters.AgentVmImage }}
+  workspace:
+    clean: all
+
+  steps:
+
+  #1. Copying download prepped directory. This is where the original source directory was copied from
+  #   Teams use the initial prep job to do config transforms then used across the pipeline
+  - download: DevOps   # downloads all artifacts from `mypipe`
+    displayName: 'Downloading Shared Artifacts from DevOps Pipeline'
+
+  - download: current  # must include this, since by including a download step, we don't get automatic behavior anymore
+    artifact: Prepped  # anything that you publish prior to this job
+    displayName: 'Downloading Current Prepped Artifacts' 
+          
+  #2. Shows all pipeline artifacts
+  - powershell: ls $(Pipeline.Workspace)
+    displayName: 'Shows all Prepped Pipeline Artifacts'
+
+  #3. Print Build Parameters
+  - powershell: |  
+      Write-Host "Build Parameters:"
+      Write-Host "AgentPoolName - ${{ parameters.AgentPoolName}}"
+      Write-Host "AgentVmImage - ${{ parameters.AgentVmImage}}"
+      Write-Host "ApplicationName - ${{ parameters.ApplicationName}}"
+      Write-Host "BuildConfiguration - ${{ parameters.BuildConfiguration}}"
+      Write-Host "MsbuildArgs - ${{ parameters.MsbuildArgs}}"
+      Write-Host "SonarScanSolutionFile - ${{ parameters.SonarScanSolutionFile}}"
+      Write-Host "PathToNugetConfig - ${{ parameters.PathToNugetConfig}}"
+      Write-Host "PublishArtifacts - ${{ parameters.PublishArtifacts}}"
+      Write-Host "ProjectFileLocation - ${{ parameters.ProjectFileLocation}}"
+      Write-Host "DeploymentResourcesPublishPath - ${{ parameters.DeploymentResourcesPublishPath}}"
+      Write-Host ""
+      Write-Host "TestProjectFileLocation - ${{ parameters.TestProjectFileLocation}}"
+      Write-Host "RunSettingsFileLocation - ${{ parameters.RunSettingsFileLocation}}"
+      Write-Host "RunSettingsOverrideParameters - ${{ parameters.RunSettingsOverrideParameters}}"
+      Write-Host "TestCategories - ${{ parameters.TestCategories}}"
+      Write-Host ""
+      Write-Host "ProjectKey - ${{ parameters.ProjectKey}}"
+      Write-Host "ProjectName - ${{ parameters.ProjectName}}"
+      Write-Host "ExtraProperties - ${{ parameters.ExtraProperties}}"
+    displayName: 'Print CI Parameters'
+
+  #4. Prepare SonarQube Scan
+  - template: ../Security/SonarQubePrepareMsBuild.yml  # Template reference
+    parameters:
+      ProjectKey: '${{ parameters.ProjectKey }}'
+      ProjectName: '${{ parameters.ProjectName }}'
+      ExtraProperties: '${{ parameters.ExtraProperties }}'
+
+  #5. Restore and Build Solution
+  - template: NetFxRestoreAndBuild.yml  # Template reference
+    parameters:
+      BuildConfiguration: '${{ parameters.BuildConfiguration }}'
+      MsbuildArgs: '${{ parameters.MsbuildArgs }}'
+      SonarScanSolutionFile: '${{ parameters.SonarScanSolutionFile }}' 
+      PathToNugetConfig: '${{ parameters.PathToNugetConfig }}'
+      NetFxVersion: '${{ parameters.NetFxVersion }}'
+
+  #6. Test Solution
+  - template: NetFxTest.yml  # Template reference
+    parameters:
+      TestProjectFileLocation: '${{ parameters.TestProjectFileLocation }}'
+      ${{ if eq(parameters.RunSettingsFileLocation, '') }}:
+        RunSettingsFileLocation: '$(Pipeline.Workspace)/DevOps/SharedArtifacts/CodeCoverage.runsettings'
+      ${{ if ne(parameters.RunSettingsFileLocation, '') }}:
+        RunSettingsFileLocation: ' $(Pipeline.Workspace)/Prepped/${{ parameters.RunSettingsFileLocation }}'
+      RunSettingsOverrideParameters: '${{ parameters.RunSettingsOverrideParameters }}'
+      TestCategories: '${{ parameters.TestCategories }}'
+      BuildConfiguration: '${{ parameters.BuildConfiguration }}'
+
+  #7. Analyze and Publish SonarQube Scan
+  - template: ../Security/SonarQubeAnalyzeAndPublish.yml  # Template reference
+    parameters:
+      ProjectKey: '${{ parameters.ProjectKey }}'
+      ProjectName: '${{ parameters.ProjectName }}'
+
+  #8. Publish Artifacts
+  - template: NetFxPublish.yml  # Template reference
+    parameters:
+      ArtifactName: '${{ parameters.ApplicationName }}_Package'
+      PublishArtifacts: '${{ parameters.PublishArtifacts }}'
+      DeploymentPublishPath: '$(build.artifactstagingdirectory)'
+
+  ### Commenting Entire Section. App Ingestion to track application technology usage will be disabled for now. 
+  ### DevSecOps will re-evaluate with EA team whether it's still needed or not. 
+  #9. Install .Net Core 3.1 for AzureAgents in case
+  # - ${{ if eq(parameters.AgentPoolName, 'AzureAgents') }}:
+  #   - task: UseDotNet@2
+  #     displayName: 'Installing .Net Core SDK Version 3.1.x'
+  #     inputs:
+  #       packageType: 'sdk'
+  #       version:  '3.1.x'
+  #       includePreviewVersions: false  
+
+  # #10. Application Info Data Ingestion 
+  # - template:  ../Common/AppIngestion.yml
+  #   parameters:
+  #     ProjectFile: $(Pipeline.Workspace)/Prepped/${{ parameters.ProjectFileLocation }}
+  #     Technology: '.Net Framework'
+  #     Language: 'c#'
+  #     ApplicationName: ${{ parameters.ApplicationName }}
+      
+  #11. Publish Resources
+  - template: NetFxPublish.yml  # Template reference
+    parameters:
+      ArtifactName: '${{ parameters.ApplicationName }}_DeploymentResource'
+      PublishArtifacts: '${{ parameters.PublishArtifacts }}'
+      DeploymentPublishPath: '${{ parameters.DeploymentResourcesPublishPath }}'  
+
+  #12. Clean Up
+  - task: mspremier.PostBuildCleanup.PostBuildCleanup-task.PostBuildCleanup@3
+    displayName: 'Clean Agent Directories'

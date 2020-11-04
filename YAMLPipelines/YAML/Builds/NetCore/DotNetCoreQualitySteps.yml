@@ -1,0 +1,144 @@
+#Type: Step Yaml Template
+#Summary: 
+#   1. Executes Unit tests in .net core projects
+#   2. Performs a restore & build. The restore has a custom nuget config file option
+#   3. Test Task Options
+#       1. The first 4 test options are preconfigured tasks that focus on whether Runsettings and TestCategories are or are not empty
+#       2. The 5th test option is a preconfigured task used for linux based runs and requires coverlet-msbuild -- https://www.nuget.org/packages/coverlet.msbuild/
+#       3. The 6th test option allows for custom arguments and is a catch all for all other unique scenarios
+
+parameters:
+  Name: ''
+  AgentPoolName: ''
+  AgentVmImage: ''
+  BuildConfiguration: ''
+  TestProjectFile: ''
+  RunSettingsFile: ''
+  TestCategories: ''
+  NetCoreSDKVersion: ''
+  PathToNugetConfig: ''
+  SonarScanSolutionFile: ''
+  UseCoverlet: ''
+  CustomTestArguments: ''
+
+steps:
+#LOGGING
+- powershell: |  
+    Write-Host "Test Build Parameters:"
+    Write-Host "Name - ${{ parameters.Name}}"
+    Write-Host "AgentPoolName - ${{ parameters.AgentPoolName}}"
+    Write-Host "AgentVmImage - ${{ parameters.AgentVmImage}}"
+    Write-Host "BuildConfiguration - ${{ parameters.BuildConfiguration}}"
+    Write-Host "TestProjectFile - ${{ parameters.TestProjectFile}}"
+    Write-Host "RunSettingsFile - ${{ parameters.RunSettingsFile}}"
+    Write-Host "TestCategories - ${{ parameters.TestCategories}}"
+    Write-Host "UseCoverlet - ${{ parameters.UseCoverlet}}"
+    Write-Host "CustomTestArguments - ${{ parameters.CustomTestArguments}}"
+    Write-Host "NetCoreSDKVersion - ${{ parameters.NetCoreSDKVersion}}"
+    Write-Host "PathToNugetConfig - ${{ parameters.PathToNugetConfig}}"
+    Write-Host "SonarScanSolutionFile - ${{ parameters.SonarScanSolutionFile}}"
+  displayName: 'QS-Print Quality Build Parameters'
+
+# SDK Installation
+- ${{ if ne(parameters.NetCoreSDKVersion, '') }}:
+  - task: UseDotNet@2
+    displayName: 'QS-Installing .Net Core SDK Version ${{ parameters.NetCoreSDKVersion}}'
+    inputs:
+      packageType: 'sdk'
+      version:  ${{ parameters.NetCoreSDKVersion}}
+      includePreviewVersions: true
+
+#RESTORE
+- ${{ if eq(parameters.PathToNugetConfig, '') }}:
+  - task: DotNetCoreCLI@2
+    displayName: 'QS-Restore DotNet Core Project ${{ parameters.SonarScanSolutionFile}}'
+    inputs:
+      command: restore
+      projects: ${{ parameters.SonarScanSolutionFile}}
+      # Also include ASInternal Private NugetFeed
+      vstsFeed: 'c005f067-8dd6-49a9-a11f-6ac99ea93a22'
+
+- ${{ if ne(parameters.PathToNugetConfig, '') }}:
+  - task: DotNetCoreCLI@2
+    displayName: 'QS-Restore DotNet Core Project ${{ parameters.SonarScanSolutionFile}}'
+    inputs:
+      command: restore
+      projects: ${{ parameters.SonarScanSolutionFile}}
+      feedsToUse: config
+      nugetConfigPath: ${{ parameters.PathToNugetConfig}}
+
+#BUILD
+- task: DotNetCoreCLI@2
+  displayName: 'QS-Build the Test Project Files ${{ parameters.SonarScanSolutionFile}}'
+  inputs:
+    projects: ${{ parameters.SonarScanSolutionFile}}
+    arguments: '/p:Configuration=${{ parameters.BuildConfiguration}} /p:Platform="any cpu" /p:OutputPath=$(Build.ArtifactStagingDirectory)'
+
+#TEST OPTIONS
+
+##Logic
+##  1. First 4 Options
+##      1. Variations of checking if either TestCategories & RunsettingsFile are empty
+##      2. UseCoverlet is empty
+##      2. CustomTestArguments is empty
+##  2. 5th Option
+##      1. UseCoverlet is not empty
+##  3. 6th Option
+##      1. CustomTestArguments is not empty
+
+# (1) Run includes test categories and runsettings file
+- ${{ if and(ne(parameters.TestCategories, ''), ne(parameters.RunsettingsFile, ''), eq(parameters.UseCoverlet, ''), eq(parameters.CustomTestArguments, '')) }}:      
+    - task: DotNetCoreCLI@2
+      displayName: 'QS1-Run the Tests ${{ parameters.TestProjectFile}}'
+      inputs:
+        command: 'test'
+        projects: '${{ parameters.TestProjectFile}}'
+        arguments: '--filter ${{ parameters.TestCategories }} --settings ${{ parameters.RunSettingsFile}}'
+  
+# (2) Run includes only test categories
+- ${{ if and(ne(parameters.TestCategories, ''), eq(parameters.RunsettingsFile, ''), eq(parameters.UseCoverlet, ''), eq(parameters.CustomTestArguments, '')) }}:    
+  - task: DotNetCoreCLI@2
+    displayName: 'QS2-Run the Tests ${{ parameters.TestProjectFile}}'
+    inputs:
+      command: 'test'
+      projects: '${{ parameters.TestProjectFile}}'
+      arguments: '--filter ${{ parameters.TestCategories }}'
+
+# (3) Run includes only a runsettings file
+- ${{ if and(eq(parameters.TestCategories, ''), ne(parameters.RunsettingsFile, ''), eq(parameters.UseCoverlet, ''), eq(parameters.CustomTestArguments, '')) }}:    
+  - task: DotNetCoreCLI@2
+    displayName: 'QS3-Run the Tests ${{ parameters.TestProjectFile}}'
+    inputs:
+      command: 'test'
+      projects: '${{ parameters.TestProjectFile}}'
+      arguments: '--settings ${{ parameters.RunSettingsFile}}'
+
+#(4) Run does not include a runsettings file or test categories (This is the original)
+- ${{ if and(eq(parameters.TestCategories, ''), eq(parameters.RunsettingsFile, ''), eq(parameters.UseCoverlet, ''), eq(parameters.CustomTestArguments, '')) }}:    
+  - task: DotNetCoreCLI@2
+    displayName: 'QS4-Run the Tests ${{ parameters.TestProjectFile}}'
+    inputs:
+      command: 'test'
+      projects: '${{ parameters.TestProjectFile}}'
+
+##>Coverlet Option
+#(5) Run executes on linux machines or requires Coverlet.  
+#Requires Coverlet to be installed in the test projects 
+#CustomTestArguments must be empty
+- ${{ if and(ne(parameters.UseCoverlet, ''), eq(parameters.CustomTestArguments, '')) }}:    
+  - task: DotNetCoreCLI@2
+    displayName: 'QS5-Run the Tests ${{ parameters.TestProjectFile}}'
+    inputs:
+      command: 'test'
+      projects: '${{ parameters.TestProjectFile}}'
+      arguments: '/p:CollectCoverage=true /p:CoverletOutputFormat=opencover'
+
+##>Custom Arguments Option - Catch-All
+#(6) Run with custom arguments
+- ${{ if ne(parameters.CustomTestArguments, '') }}:    
+  - task: DotNetCoreCLI@2
+    displayName: 'QS6-Run the Tests ${{ parameters.TestProjectFile}}'
+    inputs:
+      command: 'test'
+      projects: '${{ parameters.TestProjectFile}}'
+      arguments: '${{ parameters.CustomTestArguments}}'

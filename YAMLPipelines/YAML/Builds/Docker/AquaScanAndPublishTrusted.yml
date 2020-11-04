@@ -1,0 +1,56 @@
+#Type: Step Yaml Template
+#Summary: 
+#   1. Builds docker and orchestrates publishing to the trusted registry
+#   2. This is a helper template and should not be called directly from a triggering yaml.  
+#   3. Use CI_StageDocker.yml instead for publishing to the trusted registry
+
+parameters:
+  KubernetesFolderLocation: 'Kubernetes'  #default value- 'Kubernetes' if folder is located at the repository root
+
+steps:
+### Pull down image to scan from untrusted registry. Note: to be replaced by a 
+### direct registry scan by the aqua task in a pending feature
+- powershell: |
+      docker login -u $(dockeruser) -p $(dockeruser) $(acrsandbox) 
+      docker pull "$(ImageUntrusted)"
+      docker pull "$(ImageUntrustedLatest)"
+  displayName: 'Pull Docker Image for Aqua Scan'
+
+### Aqua scan of local image. Results published in the Aqua console's 'CI/CD' image results
+- task: aquasecScanner@4
+  displayName: 'Scanning Docker Container Image'
+  inputs:
+    image: '$(ImageUntrustedLatest)'
+    connection: 'aqua-console'
+    caCertificates: true
+    scanType: local
+    registry: 'acrsandbox'
+    scanMalware: true
+    register: true
+    registerCompliant: true
+    scanner: 'registry.aquasec.com/scanner:4.6'
+
+### Push scanned image into trusted registry
+- powershell: |
+      docker tag "$(ImageUntrusted)" "$(ImageTrusted)"
+      docker tag "$(ImageUntrustedLatest)" "$(ImageTrustedLatest)"
+      docker login -u "$(acrUser)" -p "$(acrKey)" $(TrustedRegistry) 
+      docker push "$(ImageTrusted)"
+      docker push "$(ImageTrustedLatest)"
+  displayName: 'Push Aqua Compliant Docker Image to $(TrustedRegistry) Private Container Registry'
+
+### Warning: We are forcing projects to have a Kubernetes folder to be used as a deploy pipeline artifact
+### Create a 'trustedimage.out' file and publish it along with manifest files in the kubernetes folder
+- powershell: |
+      echo $(ImageTrusted) > $(Build.SourcesDirectory)/${{parameters.KubernetesFolderLocation}}/trustedimage.out
+      ls -la ${{parameters.KubernetesFolderLocation}}
+  displayName: 'Create file with image to deploy'
+- task: CopyFiles@2
+  displayName: 'Copy Kubernetes deployment artifacts to: $(build.artifactstagingdirectory)'
+  inputs:
+    SourceFolder: ${{parameters.KubernetesFolderLocation}}
+    TargetFolder: $(Build.ArtifactStagingDirectory)
+- task: PublishPipelineArtifact@1
+  inputs:
+    artifactName: 'Kubernetes' 
+    targetPath: $(Build.ArtifactStagingDirectory)

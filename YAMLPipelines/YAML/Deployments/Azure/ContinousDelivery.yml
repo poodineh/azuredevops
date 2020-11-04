@@ -1,0 +1,79 @@
+parameters:
+  ### Deployment Parameters
+  EnvironmentName: ''
+  AgentPoolName: ''
+  AzureSubscription: ''
+  ResourceGroupName: ''
+  DeployedLocation: ''
+  BaseTemplateFile: ''
+  ParametersFile: ''
+  WebAppName: ''
+  PackageName: ''
+  ### New Deployment Options: 
+  DeploymentType: '' # valid values: WebAppService, FunctionAppService, ContainerAppService
+
+
+jobs:
+  - deployment: WebAppDeploymentTo${{ parameters.EnvironmentName }} 
+    pool:
+        name: ${{ parameters.AgentPoolName }}  # Valid Values: 'OnPremAgents' - Hosted:'Hosted VS2017',  'Hosted macOS', 'Hosted Ubuntu 1604'
+    displayName: Azure App Service Deploy
+    environment:  ${{ parameters.EnvironmentName }} 
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          # Downloading Pipeline artifacts
+          # https://github.com/microsoft/azure-pipelines-yaml/blob/master/design/pipeline-artifacts.md
+          ### Download ARM Templates artifact from CloudHub Git Pipeline resources: 
+          ### https://itsals.visualstudio.com/CloudHub/_build?definitionId=4327 
+          - download: ARMTemplates
+          - download: current
+            displayName: 'Downloading Pipeline artifacts'
+          
+          # Shows all pipeline artifacts
+          - script: ls $(Pipeline.Workspace)
+            displayName: 'Shows all pipeline artifacts'
+
+          # Shows Deployment Resources from Feature Teams
+          - script: ls $(Pipeline.Workspace)/DeploymentResources      
+            displayName: 'Shows all deployment resources from artifacts'
+
+          # Shows CloudHub Shared Artifacts 
+          - script: ls $(Pipeline.Workspace)/ARMTemplates/BestPractice      
+            displayName: 'Shows all deployment resources from artifacts'
+
+          # Creating Azure Resources
+          - task: AzureResourceGroupDeployment@2
+            displayName: 'Azure Deployment:Create Or Update Resource Group'
+            inputs:
+              azureSubscription: '${{ parameters.AzureSubscription }}'
+              action: 'Create Or Update Resource Group'
+              resourceGroupName: '${{ parameters.ResourceGroupName }}'
+              location: '${{ parameters.DeployedLocation }}'
+              ### Use the BASE ARM template from CloudHub
+              ### https://itsals.visualstudio.com/CloudHub/_git/ARMTemplates
+              ${{ if eq(parameters.DeploymentType, 'WebAppService') }}:
+               csmFile: $(Pipeline.Workspace)/ARMTemplates/BestPractice/BaseWebApp/baseWebApp.json
+              ${{ if eq(parameters.DeploymentType, 'FunctionAppService') }}:
+               csmFile: $(Pipeline.Workspace)/ARMTemplates/BestPractice/baseFunctionAppService.json
+              ${{ if eq(parameters.DeploymentType, 'ContainerAppService') }}:
+               csmFile: $(Pipeline.Workspace)/ARMTemplates/BestPractice/baseLinuxCtnsAppService.json
+              ### Use the Parameter file provided by the Feature Team
+              csmParametersFile: $(Pipeline.Workspace)/DeploymentResources/${{ parameters.ParametersFile }}              
+          
+          - task: AzureRmWebAppDeployment@4
+            displayName: 'Deploy Azure App Service'
+            inputs:
+              azureSubscription: '${{ parameters.AzureSubscription }}'
+              resourceGroupName: '${{ parameters.ResourceGroupName }}'
+              ### Web application Azure App Service Type
+              ${{ if eq(parameters.DeploymentType, 'WebAppService') }}:
+                appType: webApp
+              ${{ if eq(parameters.DeploymentType, 'FunctionAppService') }}:
+                appType: functionAppLinux
+              ${{ if eq(parameters.DeploymentType, 'ContainerAppService') }}:
+                appType: webAppContainer
+              WebAppName: '${{ parameters.WebAppName }}'
+              packageForLinux: '$(Pipeline.Workspace)/${{ parameters.PackageName }}_Package/*.zip'
+  

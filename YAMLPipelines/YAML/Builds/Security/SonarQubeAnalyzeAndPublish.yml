@@ -1,0 +1,26 @@
+#Type: Step Yaml Template
+#Summary: 
+#   1. Triggers SonarQubeAnalyze, SonarQubePublish, and sonar-buildbreaker
+#   2. This task is used for most apps and must be placed after either the build task or test task
+#   3. It will not trigger unless both the ProjectKey and ProjectName are populated
+
+parameters:
+  ProjectKey: '' #Project Key
+  ProjectName: '' #Project Name
+
+steps:
+- task: SonarQubeAnalyze@4
+  condition: and(succeeded(), ne('${{ parameters.ProjectKey}}', ''), ne('${{ parameters.ProjectName}}', ''))
+  displayName: 'SQAP-SonarQubeAnalyze'
+
+- task: SonarQubePublish@4
+  condition: and(succeeded(), ne('${{ parameters.ProjectKey}}', ''), ne('${{ parameters.ProjectName}}', ''))
+  displayName: 'SQAP-SonarQubePublish'
+  inputs:
+    pollingTimeoutSec: '300'
+
+- task: sonar-buildbreaker@8
+  condition: and(succeeded(), ne('${{ parameters.ProjectKey}}', ''), ne('${{ parameters.ProjectName}}', ''))
+  displayName: 'SQAP-SonarBuildBreaker with AAGSonarQube'
+  inputs:
+    SonarQube: 'AAGSonarQube'
