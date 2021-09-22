@@ -1,0 +1,41 @@
+version: '3.4'
+
+services:
+  api:
+    image: api:1.0
+    # Environment Variables to run
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+    ports:
+      - "8080:8080"
+    networks:
+      vpcbr:
+        ipv4_address: 172.18.0.2
+    # Use if this API has dependencies to other API's
+    # depends_on:
+    #   - catalog.api
+    #   - ordering.api
+    #   - basket.api
+
+  ui:
+    image: ui:1.0
+    environment:
+      - ASPNETCORE_ENVIRONMENT=DockerCompose
+    ports:
+      # When the UI starts, we just assign default HTTP Port
+      # User just navigates to  http://localhost
+      - "80:8081"
+    networks:
+      vpcbr:
+        ipv4_address: 172.18.0.3
+
+### Here we use custom networks because when use docker compose spin up both API and UI containers, docker internally cannot resolve localhost to itself
+### We use default which is bridge
+### A bridge network is a Link Layer device which forwards traffic between network segments
+### https://docs.docker.com/network/bridge/
+networks:
+  vpcbr:
+    driver: bridge
+    ipam:
+     config:
+       - subnet: 172.18.0.0/16

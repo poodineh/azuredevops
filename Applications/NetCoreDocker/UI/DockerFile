@@ -1,0 +1,48 @@
+# This instruction initializes a new build stage and sets the Base Image for the remaining 
+FROM mcr.microsoft.com/dotnet/core/sdk:3.1-alpine AS build-env
+
+# set donnet cli home envvar to run in /tmp otherwise will fail due to permissions
+ENV DOTNET_CLI_HOME=/tmp/
+
+# sets the working directory for any remaining RUN, CMD, ENTRYPOINT, COPY, and ADD Dockerfile instructions. If the directory doesn't exist, it's created. In this case, WORKDIR is set to the tmp directory since these commands are run as non-root.
+WORKDIR /tmp
+
+# Copy csproj and restore as distinct layers. Instruction copies new files or directories from the source path and adds them to the destination container filesystem
+COPY *.csproj ./
+RUN dotnet restore
+
+# Copy everything else and build. This COPY instruction copies the rest of the files into our container into new layers.
+COPY . ./
+# Command compiles the application, reads through its dependencies specified in the project file, and publishes the resulting set of files to a directory. Our app is published with a Release configuration and output to the default directory.
+# NOTE: We're bypassing dotnet build since dotnet publish "builds" the application
+RUN dotnet publish -c Release -o out
+
+# Build runtime image
+FROM mcr.microsoft.com/dotnet/core/aspnet:3.1-alpine
+
+WORKDIR /app
+
+COPY --from=build-env /tmp/out .
+
+### List all files now in this directory
+RUN ls -la
+
+### Run Environment Variable
+### Override .Net Core Environment Runtime
+# ENV ASPNETCORE_ENVIRONMENT="Development"
+
+### Need to run on port > 1024 for issue on .net core: 
+### Override .Net Core URL
+# https://github.com/aspnet/AspNetCore/issues/4699
+# EXPOSE 8080
+# ENV ASPNETCORE_URLS=http://*:8081
+
+# Place holder for enabling HTTPS
+# See issue on Development environment for Docker
+# https://github.com/aspnet/Docs/issues/6199
+# EXPOSE 5001/tcp
+
+EXPOSE 8081
+
+#Run the app from the base image layer
+ENTRYPOINT ["dotnet", "ui.dll"]

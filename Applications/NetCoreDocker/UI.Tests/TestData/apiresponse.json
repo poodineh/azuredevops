@@ -1,0 +1,32 @@
+[
+    {
+        "date": "2020-01-08T09:23:28.3295239-08:00",
+        "temperatureC": -19,
+        "temperatureF": -2,
+        "summary": "Hot"
+    },
+    {
+        "date": "2020-01-09T09:23:28.3298392-08:00",
+        "temperatureC": 36,
+        "temperatureF": 96,
+        "summary": "Hot"
+    },
+    {
+        "date": "2020-01-10T09:23:28.3298449-08:00",
+        "temperatureC": -8,
+        "temperatureF": 18,
+        "summary": "Freezing"
+    },
+    {
+        "date": "2020-01-11T09:23:28.3298455-08:00",
+        "temperatureC": -19,
+        "temperatureF": -2,
+        "summary": "Cool"
+    },
+    {
+        "date": "2020-01-12T09:23:28.3298458-08:00",
+        "temperatureC": 3,
+        "temperatureF": 37,
+        "summary": "Balmy"
+    }
+]

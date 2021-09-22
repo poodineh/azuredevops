@@ -1,0 +1,22 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Data From API Response";
+}
+
+<div class="text-center">
+    <h2>@ViewData["Title"]</h2>
+    <p>This is a simple page that shows data from a web service response</p>    
+</div>
+<div class="left">
+<h3>Weatherforecast for the next 5 Days</h3>
+    <dl>
+        @foreach (var forecast in @Model.WeatherForecasts)
+        {
+            <dt>@forecast.Date.ToShortDateString()</dt>
+            <dd>@(forecast.Summary), Temperature: @(forecast.TemperatureC)</dd>            
+        }
+    </dl>
+</div>
+
+
